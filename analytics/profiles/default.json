@@ -1,0 +1,434 @@
+{
+  "profile_name": "default",
+  "created_at": 1775441874,
+  "updated_at": 1776003064,
+  "sessions": [
+    {
+      "timestamp": 1775441956,
+      "profile_name": "default",
+      "session_seconds": 81,
+      "focus_seconds": 17.06099999999995,
+      "distraction_count": 2,
+      "break_count": 0,
+      "avg_score": 48.47645114165874,
+      "min_score": 18.000000000105423,
+      "max_score": 99.3094833044912,
+      "state_seconds": {
+        "ON_SCREEN_READING": 17.06099999999995,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 17.29199999999996,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 22.07700000000014
+      },
+      "work_interval_minutes_used": 25,
+      "break_duration_minutes_used": 5
+    },
+    {
+      "timestamp": 1775442857,
+      "profile_name": "default",
+      "session_seconds": 198,
+      "focus_seconds": 30.690000000000467,
+      "distraction_count": 1,
+      "break_count": 1,
+      "avg_score": 64.55082808132113,
+      "min_score": 32.06205662119636,
+      "max_score": 99.99999999998464,
+      "state_seconds": {
+        "ON_SCREEN_READING": 17.126999999999953,
+        "OFFSCREEN_WRITING": 13.562999999999949,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 5.51100000000001,
+        "AWAY": 0.0,
+        "UNCERTAIN": 93.62100000000285
+      },
+      "work_interval_minutes_used": 25,
+      "break_duration_minutes_used": 5
+    },
+    {
+      "timestamp": 1775443275,
+      "profile_name": "default",
+      "session_seconds": 113,
+      "focus_seconds": 7.590000000000033,
+      "distraction_count": 0,
+      "break_count": 0,
+      "avg_score": 52.50232447369811,
+      "min_score": 34.66666666666667,
+      "max_score": 99.94311922354268,
+      "state_seconds": {
+        "ON_SCREEN_READING": 7.590000000000033,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 33.46200000000057,
+        "UNCERTAIN": 38.41200000000076
+      },
+      "work_interval_minutes_used": 25,
+      "break_duration_minutes_used": 5
+    },
+    {
+      "timestamp": 1775972499,
+      "profile_name": "default",
+      "session_seconds": 120,
+      "focus_seconds": 25.146000000000257,
+      "distraction_count": 2,
+      "break_count": 0,
+      "avg_score": 63.5880304176292,
+      "min_score": 21.97110079207069,
+      "max_score": 99.13640766221128,
+      "state_seconds": {
+        "ON_SCREEN_READING": 11.780999999999977,
+        "OFFSCREEN_WRITING": 13.364999999999952,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 13.397999999999952,
+        "AWAY": 0.0,
+        "UNCERTAIN": 42.63600000000092
+      },
+      "work_interval_minutes_used": 25,
+      "break_duration_minutes_used": 5
+    },
+    {
+      "timestamp": 1775973000,
+      "profile_name": "default",
+      "session_seconds": 46,
+      "focus_seconds": 19.17300000000003,
+      "distraction_count": 1,
+      "break_count": 1,
+      "avg_score": 82.5715752112068,
+      "min_score": 54.64008818045762,
+      "max_score": 99.99999999999315,
+      "state_seconds": {
+        "ON_SCREEN_READING": 19.17300000000003,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 3.8279999999999936,
+        "AWAY": 0.0,
+        "UNCERTAIN": 8.745000000000026
+      },
+      "work_interval_minutes_used": 25,
+      "break_duration_minutes_used": 5
+    },
+    {
+      "timestamp": 1775973516,
+      "profile_name": "default",
+      "session_seconds": 89,
+      "focus_seconds": 6.2040000000000175,
+      "distraction_count": 0,
+      "break_count": 0,
+      "avg_score": 59.8767355518852,
+      "min_score": 54.0,
+      "max_score": 99.4462297200497,
+      "state_seconds": {
+        "ON_SCREEN_READING": 2.2769999999999975,
+        "OFFSCREEN_WRITING": 3.9269999999999934,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 53.46000000000133
+      },
+      "work_interval_minutes_used": 25,
+      "break_duration_minutes_used": 5
+    },
+    {
+      "timestamp": 1775973683,
+      "profile_name": "default",
+      "session_seconds": 110,
+      "focus_seconds": 14.915999999999928,
+      "distraction_count": 0,
+      "break_count": 0,
+      "avg_score": 66.14040164255047,
+      "min_score": 54.0,
+      "max_score": 99.44971984188042,
+      "state_seconds": {
+        "ON_SCREEN_READING": 11.417999999999983,
+        "OFFSCREEN_WRITING": 3.4979999999999944,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 60.984000000001615
+      },
+      "work_interval_minutes_used": 25,
+      "break_duration_minutes_used": 5
+    },
+    {
+      "timestamp": 1775974729,
+      "profile_name": "default",
+      "session_seconds": 44,
+      "focus_seconds": 11.483999999999982,
+      "distraction_count": 0,
+      "break_count": 0,
+      "avg_score": 72.8801039183317,
+      "min_score": 60.0,
+      "max_score": 99.99999999747251,
+      "state_seconds": {
+        "ON_SCREEN_READING": 11.483999999999982,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 19.041000000000025
+      },
+      "work_interval_minutes_used": 25,
+      "break_duration_minutes_used": 5
+    },
+    {
+      "timestamp": 1775975068,
+      "profile_name": "default",
+      "session_seconds": 87,
+      "focus_seconds": 18.777000000000015,
+      "distraction_count": 1,
+      "break_count": 1,
+      "avg_score": 72.05854814016315,
+      "min_score": 56.901785398726176,
+      "max_score": 99.999999999586,
+      "state_seconds": {
+        "ON_SCREEN_READING": 18.777000000000015,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 3.596999999999994,
+        "AWAY": 0.0,
+        "UNCERTAIN": 28.11600000000037
+      },
+      "work_interval_minutes_used": 25,
+      "break_duration_minutes_used": 5
+    },
+    {
+      "timestamp": 1775975517,
+      "profile_name": "default",
+      "session_seconds": 113,
+      "focus_seconds": 15.674999999999915,
+      "distraction_count": 1,
+      "break_count": 0,
+      "avg_score": 62.007798280653326,
+      "min_score": 24.35699202331306,
+      "max_score": 99.41497343052333,
+      "state_seconds": {
+        "ON_SCREEN_READING": 15.674999999999915,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 7.557000000000032,
+        "AWAY": 0.0,
+        "UNCERTAIN": 48.80700000000115
+      },
+      "work_interval_minutes_used": 25,
+      "break_duration_minutes_used": 5
+    },
+    {
+      "timestamp": 1775993356,
+      "profile_name": "default",
+      "session_seconds": 428,
+      "focus_seconds": 152.16299999999467,
+      "distraction_count": 3,
+      "break_count": 1,
+      "avg_score": 76.84766089301971,
+      "min_score": 22.612099264341015,
+      "max_score": 100.0,
+      "state_seconds": {
+        "ON_SCREEN_READING": 152.16299999999467,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 15.179999999999923,
+        "AWAY": 7.128000000000028,
+        "UNCERTAIN": 92.53200000000281
+      },
+      "work_interval_minutes_used": 25,
+      "break_duration_minutes_used": 5
+    },
+    {
+      "timestamp": 1775998727,
+      "profile_name": "default",
+      "session_seconds": 66,
+      "focus_seconds": 17.06099999999995,
+      "distraction_count": 0,
+      "break_count": 0,
+      "avg_score": 73.99120516666247,
+      "min_score": 60.0,
+      "max_score": 99.99999997778356,
+      "state_seconds": {
+        "ON_SCREEN_READING": 17.06099999999995,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 24.057000000000215
+      },
+      "work_interval_minutes_used": 20,
+      "break_duration_minutes_used": 10
+    },
+    {
+      "timestamp": 1775999293,
+      "profile_name": "default",
+      "session_seconds": 70,
+      "focus_seconds": 24.057000000000215,
+      "distraction_count": 1,
+      "break_count": 1,
+      "avg_score": 82.26527019748693,
+      "min_score": 54.92408482830232,
+      "max_score": 100.0,
+      "state_seconds": {
+        "ON_SCREEN_READING": 24.057000000000215,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 3.266999999999995,
+        "AWAY": 0.0,
+        "UNCERTAIN": 12.671999999999963
+      },
+      "work_interval_minutes_used": 20,
+      "break_duration_minutes_used": 10
+    },
+    {
+      "timestamp": 1775999957,
+      "profile_name": "default",
+      "session_seconds": 69,
+      "focus_seconds": 16.433999999999926,
+      "distraction_count": 0,
+      "break_count": 0,
+      "avg_score": 74.40535165907998,
+      "min_score": 60.0,
+      "max_score": 99.99999999994736,
+      "state_seconds": {
+        "ON_SCREEN_READING": 16.433999999999926,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 20.922000000000097
+      },
+      "work_interval_minutes_used": 20,
+      "break_duration_minutes_used": 10
+    },
+    {
+      "timestamp": 1776001176,
+      "profile_name": "default",
+      "session_seconds": 112,
+      "focus_seconds": 23.43000000000019,
+      "distraction_count": 0,
+      "break_count": 0,
+      "avg_score": 71.73066640612278,
+      "min_score": 60.0,
+      "max_score": 100.0,
+      "state_seconds": {
+        "ON_SCREEN_READING": 23.43000000000019,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 35.31000000000064
+      },
+      "work_interval_minutes_used": 20,
+      "break_duration_minutes_used": 10
+    },
+    {
+      "timestamp": 1776001932,
+      "profile_name": "default",
+      "session_seconds": 115,
+      "focus_seconds": 6.237000000000018,
+      "distraction_count": 0,
+      "break_count": 0,
+      "avg_score": 68.19299518034556,
+      "min_score": 59.999999999999986,
+      "max_score": 99.8614,
+      "state_seconds": {
+        "ON_SCREEN_READING": 6.237000000000018,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 45.50700000000103
+      },
+      "work_interval_minutes_used": 20,
+      "break_duration_minutes_used": 10
+    },
+    {
+      "timestamp": 1776002444,
+      "profile_name": "default",
+      "session_seconds": 169,
+      "focus_seconds": 21.747000000000128,
+      "distraction_count": 0,
+      "break_count": 0,
+      "avg_score": 87.35940789408961,
+      "min_score": 78.00000000000003,
+      "max_score": 99.99999999999994,
+      "state_seconds": {
+        "ON_SCREEN_READING": 21.747000000000128,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 52.20600000000128
+      },
+      "work_interval_minutes_used": 20,
+      "break_duration_minutes_used": 10
+    },
+    {
+      "timestamp": 1776002624,
+      "profile_name": "default",
+      "session_seconds": 79,
+      "focus_seconds": 11.054999999999989,
+      "distraction_count": 0,
+      "break_count": 0,
+      "avg_score": 89.74355196869489,
+      "min_score": 78.00000000000003,
+      "max_score": 99.99999999999994,
+      "state_seconds": {
+        "ON_SCREEN_READING": 11.054999999999989,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 15.113999999999924
+      },
+      "work_interval_minutes_used": 20,
+      "break_duration_minutes_used": 10
+    },
+    {
+      "timestamp": 1776002983,
+      "profile_name": "default",
+      "session_seconds": 255,
+      "focus_seconds": 0.9240000000000006,
+      "distraction_count": 0,
+      "break_count": 0,
+      "avg_score": 57.547840967328064,
+      "min_score": 34.66666666666667,
+      "max_score": 99.9142,
+      "state_seconds": {
+        "ON_SCREEN_READING": 0.9240000000000006,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 50.85300000000123,
+        "UNCERTAIN": 34.320000000000604
+      },
+      "work_interval_minutes_used": 20,
+      "break_duration_minutes_used": 10
+    },
+    {
+      "timestamp": 1776003064,
+      "profile_name": "default",
+      "session_seconds": 34,
+      "focus_seconds": 15.839999999999913,
+      "distraction_count": 0,
+      "break_count": 0,
+      "avg_score": 99.96230206741971,
+      "min_score": 99.23166095733708,
+      "max_score": 100.0,
+      "state_seconds": {
+        "ON_SCREEN_READING": 15.839999999999913,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 0.0
+      },
+      "work_interval_minutes_used": 20,
+      "break_duration_minutes_used": 10
+    }
+  ],
+  "recommendation": {
+    "work_minutes": 20,
+    "break_minutes": 10,
+    "confidence": 0.08333333333333333,
+    "reason": "focus_ratio=36%, avg_score=76.8, distractions/hour=25.2",
+    "based_on_sessions": 1
+  }
+}

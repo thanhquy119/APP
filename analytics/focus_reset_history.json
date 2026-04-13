@@ -1,0 +1,22 @@
+[
+  {
+    "timestamp": "2026-04-12T19:20:49",
+    "baseline_rt_ms": 0.0,
+    "gonogo_rt_ms": 270.0,
+    "reaction_variability_ms": 41.0,
+    "accuracy": 29.73,
+    "commission_errors": 1,
+    "omission_errors": 25,
+    "focus_stability": 65.93,
+    "comparison": "Similar",
+    "best_game": "Visual Search",
+    "weakest_game": "Go/No-Go",
+    "score_gonogo": 37.55,
+    "score_sequence": 71.96,
+    "score_visual": 88.28,
+    "sequence_accuracy": 83.33,
+    "sequence_max_length": 5,
+    "visual_accuracy": 100.0,
+    "visual_miss_clicks": 2
+  }
+]
