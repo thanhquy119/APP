@@ -18,5 +18,25 @@
     "sequence_max_length": 5,
     "visual_accuracy": 100.0,
     "visual_miss_clicks": 2
+  },
+  {
+    "timestamp": "2026-04-13T22:00:58",
+    "baseline_rt_ms": 314.1,
+    "gonogo_rt_ms": 290.69,
+    "reaction_variability_ms": 53.58,
+    "accuracy": 91.89,
+    "commission_errors": 3,
+    "omission_errors": 0,
+    "focus_stability": 81.25,
+    "comparison": "Similar",
+    "best_game": "Visual Search",
+    "weakest_game": "Sequence Memory",
+    "score_gonogo": 87.01,
+    "score_sequence": 65.09,
+    "score_visual": 91.64,
+    "sequence_accuracy": 71.43,
+    "sequence_max_length": 5,
+    "visual_accuracy": 100.0,
+    "visual_miss_clicks": 0
   }
 ]

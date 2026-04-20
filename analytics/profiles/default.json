@@ -1,7 +1,7 @@
 {
   "profile_name": "default",
   "created_at": 1775441874,
-  "updated_at": 1776003064,
+  "updated_at": 1776330566,
   "sessions": [
     {
       "timestamp": 1775441956,
@@ -422,13 +422,1319 @@
       },
       "work_interval_minutes_used": 20,
       "break_duration_minutes_used": 10
+    },
+    {
+      "timestamp": 1776065874,
+      "profile_name": "default",
+      "session_seconds": 300,
+      "focus_seconds": 94.61100000000289,
+      "distraction_count": 0,
+      "break_count": 0,
+      "avg_score": 97.07212724794825,
+      "min_score": 79.38919965929377,
+      "max_score": 100.0,
+      "state_seconds": {
+        "ON_SCREEN_READING": 94.61100000000289,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 51.11700000000124
+      },
+      "work_interval_minutes_used": 20,
+      "break_duration_minutes_used": 10
+    },
+    {
+      "timestamp": 1776068265,
+      "profile_name": "default",
+      "session_seconds": 270,
+      "focus_seconds": 124.113000000004,
+      "distraction_count": 1,
+      "break_count": 1,
+      "avg_score": 99.67510502857212,
+      "min_score": 85.40775020301773,
+      "max_score": 99.99999999999994,
+      "state_seconds": {
+        "ON_SCREEN_READING": 124.113000000004,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 5.643000000000011,
+        "AWAY": 0.0,
+        "UNCERTAIN": 1.287
+      },
+      "work_interval_minutes_used": 20,
+      "break_duration_minutes_used": 10
+    },
+    {
+      "timestamp": 1776071357,
+      "profile_name": "default",
+      "session_seconds": 40,
+      "focus_seconds": 7.029000000000027,
+      "distraction_count": 1,
+      "break_count": 1,
+      "avg_score": 98.25645027851108,
+      "min_score": 92.97158044312283,
+      "max_score": 99.99999623461225,
+      "focus_score_start": 99.9142,
+      "focus_score_end": 94.92658058716168,
+      "score_drop_per_hour": 448.8857471554482,
+      "blink_rate_per_min": 152.57469802924348,
+      "avg_ear": 0.3572905733920894,
+      "eye_closure_ratio": 0.1048951048951049,
+      "perclos": 0.1048951048951049,
+      "fatigue_onset_minutes": 0.5972730914751688,
+      "minutes_since_last_break": 0.0058425029118855795,
+      "state_seconds": {
+        "ON_SCREEN_READING": 7.029000000000027,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 1.9799999999999982,
+        "AWAY": 0.0,
+        "UNCERTAIN": 5.148000000000006
+      },
+      "work_interval_minutes_used": 18,
+      "break_duration_minutes_used": 10
+    },
+    {
+      "timestamp": 1776072262,
+      "profile_name": "default",
+      "session_seconds": 157,
+      "focus_seconds": 44.715000000001,
+      "distraction_count": 2,
+      "break_count": 1,
+      "avg_score": 97.5859916113732,
+      "min_score": 77.58291390679939,
+      "max_score": 100.0,
+      "focus_score_start": 100.0,
+      "focus_score_end": 95.52676824229279,
+      "score_drop_per_hour": 102.5709192850061,
+      "blink_rate_per_min": 46.70767828662566,
+      "avg_ear": 0.3643776958074215,
+      "eye_closure_ratio": 0.07142857142857142,
+      "perclos": 0.07393483709273183,
+      "fatigue_onset_minutes": 1.9685601751009623,
+      "minutes_since_last_break": 0.005639477570851644,
+      "state_seconds": {
+        "ON_SCREEN_READING": 44.715000000001,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 5.214000000000007,
+        "AWAY": 0.0,
+        "UNCERTAIN": 2.7389999999999963
+      },
+      "work_interval_minutes_used": 18,
+      "break_duration_minutes_used": 11
+    },
+    {
+      "timestamp": 1776073287,
+      "profile_name": "default",
+      "session_seconds": 84,
+      "focus_seconds": 14.78399999999993,
+      "distraction_count": 2,
+      "break_count": 1,
+      "avg_score": 68.81195256295734,
+      "min_score": 37.016945110699666,
+      "max_score": 99.99999999999994,
+      "focus_score_start": 99.99999867981849,
+      "focus_score_end": 37.016945110699666,
+      "score_drop_per_hour": 2699.2737243908064,
+      "blink_rate_per_min": 9.656504345426956,
+      "avg_ear": 0.3868989147795633,
+      "eye_closure_ratio": 0.10015174506828528,
+      "perclos": 0.1062215477996965,
+      "fatigue_onset_minutes": 0.4364839871724447,
+      "minutes_since_last_break": 0.0058590451876322424,
+      "state_seconds": {
+        "ON_SCREEN_READING": 14.78399999999993,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 7.32600000000003,
+        "AWAY": 0.0,
+        "UNCERTAIN": 21.384000000000114
+      },
+      "work_interval_minutes_used": 18,
+      "break_duration_minutes_used": 11
+    },
+    {
+      "timestamp": 1776073473,
+      "profile_name": "default",
+      "session_seconds": 78,
+      "focus_seconds": 24.45300000000023,
+      "distraction_count": 1,
+      "break_count": 1,
+      "avg_score": 98.59370300802473,
+      "min_score": 90.89034175290973,
+      "max_score": 99.99999999999994,
+      "focus_score_start": 99.99999999999994,
+      "focus_score_end": 90.89034175290973,
+      "score_drop_per_hour": 420.4457652503173,
+      "blink_rate_per_min": 47.846889952153106,
+      "avg_ear": 0.40691393621167854,
+      "eye_closure_ratio": 0.04981203007518797,
+      "perclos": 0.06484962406015038,
+      "fatigue_onset_minutes": 1.1970881581306458,
+      "minutes_since_last_break": 0.0054364760716756185,
+      "state_seconds": {
+        "ON_SCREEN_READING": 24.45300000000023,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 3.3659999999999948,
+        "AWAY": 0.0,
+        "UNCERTAIN": 7.2930000000000295
+      },
+      "work_interval_minutes_used": 18,
+      "break_duration_minutes_used": 11
+    },
+    {
+      "timestamp": 1776088277,
+      "profile_name": "default",
+      "session_seconds": 263,
+      "focus_seconds": 64.44900000000175,
+      "distraction_count": 0,
+      "break_count": 0,
+      "avg_score": 97.17558639126234,
+      "min_score": 77.9506487940599,
+      "max_score": 99.99999999999994,
+      "focus_score_start": 99.9142,
+      "focus_score_end": 99.75411685235764,
+      "score_drop_per_hour": 2.1912522110740422,
+      "blink_rate_per_min": 4.586404586404586,
+      "avg_ear": 0.4082311125327875,
+      "eye_closure_ratio": 0.0007207207207207207,
+      "perclos": 0.0007207207207207207,
+      "fatigue_onset_minutes": null,
+      "minutes_since_last_break": 4.396198316415151,
+      "state_seconds": {
+        "ON_SCREEN_READING": 64.44900000000175,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 27.35700000000034
+      },
+      "work_interval_minutes_used": 18,
+      "break_duration_minutes_used": 11
+    },
+    {
+      "timestamp": 1776091560,
+      "profile_name": "default",
+      "session_seconds": 47,
+      "focus_seconds": 12.572999999999965,
+      "focus_seconds_display": 12.572999999999965,
+      "distraction_count": 1,
+      "break_count": 1,
+      "avg_score": 90.89630867695124,
+      "avg_score_display": 97.96561345679564,
+      "min_score": 28.115773442074055,
+      "max_score": 100.0,
+      "focus_score_start": 100.0,
+      "focus_score_end": 28.115773442074055,
+      "score_drop_per_hour": 5506.025864011348,
+      "blink_rate_per_min": 13.018008244738555,
+      "avg_ear": 0.3621747963717274,
+      "eye_closure_ratio": 0.14797136038186157,
+      "perclos": 0.18138424821002386,
+      "fatigue_onset_minutes": 0.6384147445360819,
+      "minutes_since_last_break": 0.007952411969502768,
+      "state_seconds": {
+        "ON_SCREEN_READING": 13.104300000000014,
+        "UNCERTAIN": 0.22770000000000012,
+        "DROWSY_FATIGUE": 4.487999999999999,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "AWAY": 0.0
+      },
+      "state_seconds_display": {
+        "ON_SCREEN_READING": 12.572999999999965,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 4.487999999999999,
+        "AWAY": 0.0,
+        "UNCERTAIN": 0.7590000000000005
+      },
+      "state_segments": [
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 9.042000000000021,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.6600000000000004,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.099,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 3.5309999999999944,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "DROWSY_FATIGUE",
+          "seconds": 4.487999999999999,
+          "uncertain_reason_type": ""
+        }
+      ],
+      "uncertain_measurement_noise_seconds": 0.0,
+      "uncertain_behavioral_seconds": 0.7590000000000005,
+      "uncertain_clean_candidate_seconds": 0.0,
+      "face_presence_ratio": 0.8353741496598639,
+      "work_interval_minutes_used": 18,
+      "break_duration_minutes_used": 11,
+      "state_seconds_raw": {
+        "ON_SCREEN_READING": 12.572999999999965,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 4.487999999999999,
+        "AWAY": 0.0,
+        "UNCERTAIN": 0.7590000000000005
+      },
+      "state_segments_cleaned": [
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 9.042000000000021,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.6600000000000004,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.099,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 3.5309999999999944,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "DROWSY_FATIGUE",
+          "seconds": 4.487999999999999,
+          "uncertain_reason_type": ""
+        }
+      ],
+      "focus_seconds_raw": 12.572999999999965,
+      "focus_seconds_cleaned": 13.104300000000014,
+      "session_seconds_cleaned": 47.0,
+      "avg_score_raw": 90.89630867695124,
+      "avg_score_cleaned": 91.07717676205762,
+      "distraction_count_cleaned": 1.0,
+      "blink_rate_per_min_cleaned": 13.018008244738555,
+      "eye_closure_ratio_cleaned": 0.14797136038186157,
+      "perclos_cleaned": 0.18138424821002386,
+      "score_drop_per_hour_raw": 5506.025864011348,
+      "score_drop_per_hour_cleaned": 5462.456798498913,
+      "uncertain_seconds_raw": 0.7590000000000005,
+      "uncertain_seconds_cleaned": 0.22770000000000012,
+      "analytics_quality_score": 0.659904092488059,
+      "session_quality_weight": 0.7109184786148501
+    },
+    {
+      "timestamp": 1776092242,
+      "profile_name": "default",
+      "session_seconds": 534,
+      "focus_seconds": 201.69599999997521,
+      "focus_seconds_display": 201.79499999997518,
+      "distraction_count": 0,
+      "break_count": 0,
+      "avg_score": 86.88302859304562,
+      "avg_score_display": 87.48513280785107,
+      "min_score": 66.23056948926707,
+      "max_score": 100.0,
+      "focus_score_start": 100.0,
+      "focus_score_end": 72.78551076453192,
+      "score_drop_per_hour": 183.46846675596456,
+      "blink_rate_per_min": 11.99177706715395,
+      "avg_ear": 0.39621141211342664,
+      "eye_closure_ratio": 0.0043969849246231155,
+      "perclos": 0.010835427135678392,
+      "fatigue_onset_minutes": null,
+      "minutes_since_last_break": 8.913183383146922,
+      "state_seconds": {
+        "ON_SCREEN_READING": 213.38625000000513,
+        "UNCERTAIN": 6.063749999999999,
+        "AWAY": 1.287,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0
+      },
+      "state_seconds_display": {
+        "ON_SCREEN_READING": 201.79499999997518,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 1.287,
+        "UNCERTAIN": 17.654999999999973
+      },
+      "state_segments": [
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 88.37400000000265,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.6930000000000004,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.066,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.165,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.033,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.099,
+          "uncertain_reason_type": "measurement_noise"
+        },
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 5.808000000000013,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 4.785000000000002,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.066,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 3.266999999999995,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.165,
+          "uncertain_reason_type": "measurement_noise"
+        },
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 20.625000000000085,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.3630000000000001,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.39600000000000013,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "AWAY",
+          "seconds": 1.287,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.8250000000000005,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.066,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.264,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.132,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 1.4189999999999996,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.165,
+          "uncertain_reason_type": "measurement_noise"
+        },
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 5.874000000000014,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.8580000000000005,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.066,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.033,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.033,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.198,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.099,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 2.2109999999999976,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.033,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.066,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.033,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 1.0230000000000006,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.132,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 81.01500000000237,
+          "uncertain_reason_type": ""
+        }
+      ],
+      "uncertain_measurement_noise_seconds": 0.42900000000000016,
+      "uncertain_behavioral_seconds": 17.32499999999996,
+      "uncertain_clean_candidate_seconds": 0.42900000000000016,
+      "face_presence_ratio": 0.9532751091703057,
+      "work_interval_minutes_used": 18,
+      "break_duration_minutes_used": 11,
+      "state_seconds_raw": {
+        "ON_SCREEN_READING": 201.69599999997521,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 1.287,
+        "UNCERTAIN": 17.753999999999976
+      },
+      "state_segments_cleaned": [
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 88.37400000000265,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.6930000000000004,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.066,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.165,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.033,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 5.907000000000013,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 4.785000000000002,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.066,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 3.266999999999995,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 20.790000000000084,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.3630000000000001,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.39600000000000013,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "AWAY",
+          "seconds": 1.287,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.8250000000000005,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.066,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.264,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.132,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 1.4189999999999996,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 6.039000000000014,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.8580000000000005,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.066,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.033,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.033,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.198,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.099,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 2.2109999999999976,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.033,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.066,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.033,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 1.0230000000000006,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.132,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 81.01500000000237,
+          "uncertain_reason_type": ""
+        }
+      ],
+      "focus_seconds_raw": 201.69599999997521,
+      "focus_seconds_cleaned": 213.38625000000513,
+      "session_seconds_cleaned": 534.0,
+      "avg_score_raw": 86.88302859304562,
+      "avg_score_cleaned": 87.23329825596697,
+      "distraction_count_cleaned": 0.0,
+      "blink_rate_per_min_cleaned": 11.99177706715395,
+      "eye_closure_ratio_cleaned": 0.0043969849246231155,
+      "perclos_cleaned": 0.010835427135678392,
+      "score_drop_per_hour_raw": 183.46846675596456,
+      "score_drop_per_hour_cleaned": 180.6569413431448,
+      "uncertain_seconds_raw": 17.753999999999976,
+      "uncertain_seconds_cleaned": 6.063749999999999,
+      "analytics_quality_score": 0.8000939708223764,
+      "session_quality_weight": 0.8300798751990199
+    },
+    {
+      "timestamp": 1776132148,
+      "profile_name": "default",
+      "session_seconds": 84,
+      "focus_seconds": 65.74999451637268,
+      "focus_seconds_display": 66.03147506713867,
+      "distraction_count": 0,
+      "break_count": 0,
+      "avg_score": 99.20858923179904,
+      "avg_score_display": 99.2509626255651,
+      "min_score": 89.61128309687795,
+      "max_score": 100.0,
+      "focus_score_start": 100.0,
+      "focus_score_end": 100.0,
+      "score_drop_per_hour": 0.0,
+      "blink_rate_per_min": 6.485279653751192,
+      "avg_ear": 0.40101493638641655,
+      "eye_closure_ratio": 0.020833333333333332,
+      "perclos": 0.02564102564102564,
+      "fatigue_onset_minutes": null,
+      "minutes_since_last_break": 1.4000712672869364,
+      "state_seconds": {
+        "ON_SCREEN_READING": 69.8632392525673,
+        "UNCERTAIN": 1.8374677062034608,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0
+      },
+      "state_seconds_display": {
+        "ON_SCREEN_READING": 66.03147506713867,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 5.66923189163208
+      },
+      "state_segments": [
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 24.18515658378601,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 3.2804644107818604,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.3914296627044678,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.07804441452026367,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.04818224906921387,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.10858297348022461,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.1793978214263916,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.04524874687194824,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.18610763549804688,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.044237613677978516,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.05292987823486328,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.22704458236694336,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.10240674018859863,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.3177323341369629,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.18809866905212402,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 27.360393285751343,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.4193241596221924,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.2814805507659912,
+          "uncertain_reason_type": "measurement_noise"
+        },
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 14.204444646835327,
+          "uncertain_reason_type": ""
+        }
+      ],
+      "uncertain_measurement_noise_seconds": 0.2814805507659912,
+      "uncertain_behavioral_seconds": 5.66923189163208,
+      "uncertain_clean_candidate_seconds": 0.2814805507659912,
+      "face_presence_ratio": 0.9084158415841584,
+      "work_interval_minutes_used": 18,
+      "break_duration_minutes_used": 11,
+      "state_seconds_raw": {
+        "ON_SCREEN_READING": 65.74999451637268,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 5.950712442398071
+      },
+      "state_segments_cleaned": [
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 24.18515658378601,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 3.2804644107818604,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.3914296627044678,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.07804441452026367,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.04818224906921387,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.10858297348022461,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.1793978214263916,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.04524874687194824,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.18610763549804688,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.044237613677978516,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.05292987823486328,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.22704458236694336,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.10240674018859863,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.3177323341369629,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.18809866905212402,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 42.26564264297485,
+          "uncertain_reason_type": ""
+        }
+      ],
+      "focus_seconds_raw": 65.74999451637268,
+      "focus_seconds_cleaned": 69.8632392525673,
+      "session_seconds_cleaned": 84.0,
+      "avg_score_raw": 99.20858923179904,
+      "avg_score_cleaned": 99.99206441964563,
+      "distraction_count_cleaned": 0.0,
+      "blink_rate_per_min_cleaned": 6.485279653751192,
+      "eye_closure_ratio_cleaned": 0.020833333333333332,
+      "perclos_cleaned": 0.02564102564102564,
+      "score_drop_per_hour_raw": 0.0,
+      "score_drop_per_hour_cleaned": 0.0,
+      "uncertain_seconds_raw": 5.950712442398071,
+      "uncertain_seconds_cleaned": 1.8374677062034608,
+      "analytics_quality_score": 0.6822777700379754,
+      "session_quality_weight": 0.7299361045322791
+    },
+    {
+      "timestamp": 1776326015,
+      "profile_name": "default",
+      "session_seconds": 148,
+      "focus_seconds": 130.7212610244751,
+      "focus_seconds_display": 130.7212610244751,
+      "distraction_count": 1,
+      "break_count": 1,
+      "avg_score": 80.75809660252615,
+      "avg_score_display": 82.54085150613477,
+      "min_score": 40.25408666058972,
+      "max_score": 83.28957646012005,
+      "focus_score_start": 80.33649091510404,
+      "focus_score_end": 40.25408666058972,
+      "score_drop_per_hour": 974.9774007854834,
+      "blink_rate_per_min": 13.192173791695726,
+      "avg_ear": 0.3698940239432785,
+      "eye_closure_ratio": 0.03219954648526077,
+      "perclos": 0.04308390022675737,
+      "fatigue_onset_minutes": 2.379981982707977,
+      "minutes_since_last_break": 0.005828980604807536,
+      "state_seconds": {
+        "ON_SCREEN_READING": 130.7212610244751,
+        "DROWSY_FATIGUE": 5.7232725620269775,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 0.0
+      },
+      "state_seconds_display": {
+        "ON_SCREEN_READING": 130.7212610244751,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 5.7232725620269775,
+        "AWAY": 0.0,
+        "UNCERTAIN": 0.0
+      },
+      "state_segments": [
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 130.7212610244751,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "DROWSY_FATIGUE",
+          "seconds": 5.7232725620269775,
+          "uncertain_reason_type": ""
+        }
+      ],
+      "uncertain_measurement_noise_seconds": 0.0,
+      "uncertain_behavioral_seconds": 0.0,
+      "uncertain_clean_candidate_seconds": 0.0,
+      "face_presence_ratio": 1.0,
+      "work_interval_minutes_used": 18,
+      "break_duration_minutes_used": 11,
+      "state_seconds_raw": {
+        "ON_SCREEN_READING": 130.7212610244751,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 5.7232725620269775,
+        "AWAY": 0.0,
+        "UNCERTAIN": 0.0
+      },
+      "state_segments_cleaned": [
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 130.7212610244751,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "DROWSY_FATIGUE",
+          "seconds": 5.7232725620269775,
+          "uncertain_reason_type": ""
+        }
+      ],
+      "focus_seconds_raw": 130.7212610244751,
+      "focus_seconds_cleaned": 130.7212610244751,
+      "session_seconds_cleaned": 148.0,
+      "avg_score_raw": 80.75809660252615,
+      "avg_score_cleaned": 80.75809660252615,
+      "distraction_count_cleaned": 1.0,
+      "blink_rate_per_min_cleaned": 13.192173791695726,
+      "eye_closure_ratio_cleaned": 0.03219954648526077,
+      "perclos_cleaned": 0.04308390022675737,
+      "score_drop_per_hour_raw": 974.9774007854834,
+      "score_drop_per_hour_cleaned": 974.9774007854834,
+      "uncertain_seconds_raw": 0.0,
+      "uncertain_seconds_cleaned": 0.0,
+      "analytics_quality_score": 0.6808333333333334,
+      "session_quality_weight": 0.7287083333333334
+    },
+    {
+      "timestamp": 1776326160,
+      "profile_name": "default",
+      "session_seconds": 138,
+      "focus_seconds": 100.52744030952454,
+      "focus_seconds_display": 100.52744030952454,
+      "distraction_count": 2,
+      "break_count": 0,
+      "avg_score": 69.93134078274441,
+      "avg_score_display": 80.5834457304022,
+      "min_score": 21.367565155029297,
+      "max_score": 100.0,
+      "focus_score_start": 100.0,
+      "focus_score_end": 34.108642578125,
+      "score_drop_per_hour": 1718.9049762228262,
+      "blink_rate_per_min": 9.082416747185352,
+      "avg_ear": 0.3501698702997457,
+      "eye_closure_ratio": 0.08321775312066575,
+      "perclos": 0.1077207582061951,
+      "fatigue_onset_minutes": 1.4960485259691874,
+      "minutes_since_last_break": 2.3146998445192972,
+      "state_seconds": {
+        "ON_SCREEN_READING": 102.17226166725159,
+        "DROWSY_FATIGUE": 23.75900149345398,
+        "UNCERTAIN": 0.704923439025879,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "AWAY": 0.0
+      },
+      "state_seconds_display": {
+        "ON_SCREEN_READING": 100.52744030952454,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 23.75900149345398,
+        "AWAY": 0.0,
+        "UNCERTAIN": 2.3497447967529297
+      },
+      "state_segments": [
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 77.7469174861908,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "DROWSY_FATIGUE",
+          "seconds": 10.310559749603271,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 1.1269843578338623,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 1.2227604389190674,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "DROWSY_FATIGUE",
+          "seconds": 13.448441743850708,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 22.78052282333374,
+          "uncertain_reason_type": ""
+        }
+      ],
+      "uncertain_measurement_noise_seconds": 0.0,
+      "uncertain_behavioral_seconds": 2.3497447967529297,
+      "uncertain_clean_candidate_seconds": 0.0,
+      "face_presence_ratio": 0.990159901599016,
+      "work_interval_minutes_used": 18,
+      "break_duration_minutes_used": 11,
+      "state_seconds_raw": {
+        "ON_SCREEN_READING": 100.52744030952454,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 23.75900149345398,
+        "AWAY": 0.0,
+        "UNCERTAIN": 2.3497447967529297
+      },
+      "state_segments_cleaned": [
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 77.7469174861908,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "DROWSY_FATIGUE",
+          "seconds": 10.310559749603271,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 1.1269843578338623,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 1.2227604389190674,
+          "uncertain_reason_type": "none"
+        },
+        {
+          "state": "DROWSY_FATIGUE",
+          "seconds": 13.448441743850708,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 22.78052282333374,
+          "uncertain_reason_type": ""
+        }
+      ],
+      "focus_seconds_raw": 100.52744030952454,
+      "focus_seconds_cleaned": 102.17226166725159,
+      "session_seconds_cleaned": 138.0,
+      "avg_score_raw": 69.93134078274441,
+      "avg_score_cleaned": 70.12204470827798,
+      "distraction_count_cleaned": 2.0,
+      "blink_rate_per_min_cleaned": 9.082416747185352,
+      "eye_closure_ratio_cleaned": 0.08321775312066575,
+      "perclos_cleaned": 0.1077207582061951,
+      "score_drop_per_hour_raw": 1718.9049762228262,
+      "score_drop_per_hour_cleaned": 1704.5636419347375,
+      "uncertain_seconds_raw": 2.3497447967529297,
+      "uncertain_seconds_cleaned": 0.704923439025879,
+      "analytics_quality_score": 0.7405571765875177,
+      "session_quality_weight": 0.77947360009939
+    },
+    {
+      "timestamp": 1776327967,
+      "profile_name": "default",
+      "session_seconds": 75,
+      "focus_seconds": 51.851102352142334,
+      "focus_seconds_display": 51.851102352142334,
+      "distraction_count": 1,
+      "break_count": 1,
+      "avg_score": 87.57691584025477,
+      "avg_score_display": 93.72130740837919,
+      "min_score": 32.8175034337395,
+      "max_score": 99.4,
+      "focus_score_start": 92.28004893386924,
+      "focus_score_end": 33.44553288072705,
+      "score_drop_per_hour": 2824.056770550825,
+      "blink_rate_per_min": 17.22019643291036,
+      "avg_ear": 0.34853886622571745,
+      "eye_closure_ratio": 0.07191521574564724,
+      "perclos": 0.11279333838001514,
+      "fatigue_onset_minutes": 1.023260724544525,
+      "minutes_since_last_break": 0.005796670913696289,
+      "state_seconds": {
+        "ON_SCREEN_READING": 51.851102352142334,
+        "DROWSY_FATIGUE": 10.865952253341675,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 0.0
+      },
+      "state_seconds_display": {
+        "ON_SCREEN_READING": 51.851102352142334,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 10.865952253341675,
+        "AWAY": 0.0,
+        "UNCERTAIN": 0.0
+      },
+      "state_segments": [
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 49.32215118408203,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "DROWSY_FATIGUE",
+          "seconds": 10.865952253341675,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 2.5289511680603027,
+          "uncertain_reason_type": ""
+        }
+      ],
+      "uncertain_measurement_noise_seconds": 0.0,
+      "uncertain_behavioral_seconds": 0.0,
+      "uncertain_clean_candidate_seconds": 0.0,
+      "face_presence_ratio": 1.0,
+      "work_interval_minutes_used": 18,
+      "break_duration_minutes_used": 11,
+      "state_seconds_raw": {
+        "ON_SCREEN_READING": 51.851102352142334,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 10.865952253341675,
+        "AWAY": 0.0,
+        "UNCERTAIN": 0.0
+      },
+      "state_segments_cleaned": [
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 49.32215118408203,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "DROWSY_FATIGUE",
+          "seconds": 10.865952253341675,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 2.5289511680603027,
+          "uncertain_reason_type": ""
+        }
+      ],
+      "focus_seconds_raw": 51.851102352142334,
+      "focus_seconds_cleaned": 51.851102352142334,
+      "session_seconds_cleaned": 75.0,
+      "avg_score_raw": 87.57691584025477,
+      "avg_score_cleaned": 87.57691584025477,
+      "distraction_count_cleaned": 1.0,
+      "blink_rate_per_min_cleaned": 17.22019643291036,
+      "eye_closure_ratio_cleaned": 0.07191521574564724,
+      "perclos_cleaned": 0.11279333838001514,
+      "score_drop_per_hour_raw": 2824.056770550825,
+      "score_drop_per_hour_cleaned": 2824.056770550825,
+      "uncertain_seconds_raw": 0.0,
+      "uncertain_seconds_cleaned": 0.0,
+      "analytics_quality_score": 0.665625,
+      "session_quality_weight": 0.71578125
     }
   ],
   "recommendation": {
-    "work_minutes": 20,
-    "break_minutes": 10,
-    "confidence": 0.08333333333333333,
-    "reason": "focus_ratio=36%, avg_score=76.8, distractions/hour=25.2",
-    "based_on_sessions": 1
+    "work_minutes": 18,
+    "break_minutes": 11,
+    "confidence": 0.23537805405172724,
+    "reason": "focus_ratio=36%, avg_score=87.1, distractions/hour=8.4, trend=+0.0, quality=0.80",
+    "based_on_sessions": 3,
+    "adaptation_stage": "personalized"
+  },
+  "baseline": {
+    "profile_name": "default",
+    "session_count": 28,
+    "blink_rate_baseline": 10.311529453803265,
+    "avg_ear_baseline": 0.38252588330099746,
+    "eye_closure_ratio_baseline": 0.048285426164491996,
+    "perclos_baseline": 0.06345725731647865,
+    "average_focus_score_baseline": 84.7657300714426,
+    "average_distraction_density": 9.843592287644082,
+    "average_fatigue_onset_minutes": 5.0,
+    "focus_score_decay_per_hour": 90.0,
+    "recommended_work_minutes": 15,
+    "recommended_break_minutes": 12,
+    "last_quality_score": 0.6117114281037982,
+    "personalization_weight": 0.87,
+    "updated_at": 1776330566
   }
 }

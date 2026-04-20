@@ -1,0 +1,128 @@
+{
+  "profile_name": "hehe",
+  "created_at": 1776334129,
+  "updated_at": 1776657706,
+  "sessions": [
+    {
+      "timestamp": 1776347731,
+      "profile_name": "hehe",
+      "session_seconds": 85,
+      "focus_seconds": 72.40156602859497,
+      "focus_seconds_display": 72.69994306564331,
+      "distraction_count": 0,
+      "break_count": 0,
+      "avg_score": 97.04728790846752,
+      "avg_score_display": 97.84647283383308,
+      "min_score": 90.51737766846216,
+      "max_score": 99.4,
+      "focus_score_start": 91.5635324181964,
+      "focus_score_end": 92.04332481789758,
+      "score_drop_per_hour": -20.320619281461834,
+      "blink_rate_per_min": 0.8516231680210862,
+      "avg_ear": 0.38118356217940647,
+      "eye_closure_ratio": 0.00392156862745098,
+      "perclos": 0.00196078431372549,
+      "fatigue_onset_minutes": null,
+      "minutes_since_last_break": 1.419923754533132,
+      "state_seconds": {
+        "ON_SCREEN_READING": 72.82584118843079,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 0.0
+      },
+      "state_seconds_display": {
+        "ON_SCREEN_READING": 72.69994306564331,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 0.12589812278747559
+      },
+      "state_segments": [
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 61.158175230026245,
+          "uncertain_reason_type": ""
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.12589812278747559,
+          "uncertain_reason_type": "behavioral_uncertainty"
+        },
+        {
+          "state": "UNCERTAIN",
+          "seconds": 0.29837703704833984,
+          "uncertain_reason_type": "measurement_noise"
+        },
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 11.243390798568726,
+          "uncertain_reason_type": ""
+        }
+      ],
+      "uncertain_measurement_noise_seconds": 0.29837703704833984,
+      "uncertain_behavioral_seconds": 0.12589812278747559,
+      "uncertain_clean_candidate_seconds": 0.29837703704833984,
+      "face_presence_ratio": 0.9709208400646203,
+      "work_interval_minutes_used": 20,
+      "break_duration_minutes_used": 10,
+      "state_seconds_raw": {
+        "ON_SCREEN_READING": 72.40156602859497,
+        "OFFSCREEN_WRITING": 0.0,
+        "PHONE_DISTRACTION": 0.0,
+        "DROWSY_FATIGUE": 0.0,
+        "AWAY": 0.0,
+        "UNCERTAIN": 0.42427515983581543
+      },
+      "state_segments_cleaned": [
+        {
+          "state": "ON_SCREEN_READING",
+          "seconds": 72.82584118843079,
+          "uncertain_reason_type": ""
+        }
+      ],
+      "focus_seconds_raw": 72.40156602859497,
+      "focus_seconds_cleaned": 72.82584118843079,
+      "session_seconds_cleaned": 85.0,
+      "avg_score_raw": 97.04728790846752,
+      "avg_score_cleaned": 97.12715146796603,
+      "distraction_count_cleaned": 0.0,
+      "blink_rate_per_min_cleaned": 0.8516231680210862,
+      "eye_closure_ratio_cleaned": 0.00392156862745098,
+      "perclos_cleaned": 0.00196078431372549,
+      "score_drop_per_hour_raw": -20.320619281461834,
+      "score_drop_per_hour_cleaned": -20.249618413279205,
+      "uncertain_seconds_raw": 0.42427515983581543,
+      "uncertain_seconds_cleaned": 0.0,
+      "analytics_quality_score": 0.7548288012420173,
+      "session_quality_weight": 0.7916044810557148
+    }
+  ],
+  "recommendation": {
+    "work_minutes": 25,
+    "break_minutes": 5,
+    "confidence": 0.0,
+    "reason": "Not enough history yet",
+    "based_on_sessions": 0,
+    "adaptation_stage": "cold_start"
+  },
+  "baseline": {
+    "profile_name": "hehe",
+    "session_count": 1,
+    "blink_rate_baseline": 4.0,
+    "avg_ear_baseline": 0.3811835621765624,
+    "eye_closure_ratio_baseline": 0.01,
+    "perclos_baseline": 0.01,
+    "average_focus_score_baseline": 97.1271514674863,
+    "average_distraction_density": 6.504030712527744e-11,
+    "average_fatigue_onset_minutes": 35.0,
+    "focus_score_decay_per_hour": -20.249618413279208,
+    "recommended_work_minutes": 24,
+    "recommended_break_minutes": 6,
+    "last_quality_score": 0.7916044810557148,
+    "personalization_weight": 0.12,
+    "updated_at": 1776657706
+  }
+}

@@ -159,15 +159,67 @@ class FocusResetConfig:
 
 @dataclass(frozen=True)
 class Theme:
+    mode: str = "dark"
     background: str = "#050b18"
     panel: str = "#0f172a"
     panel_alt: str = "#111c2f"
+    panel_soft: str = "#0a1426"
     border: str = "#233347"
     text_primary: str = "#e2e8f0"
     text_muted: str = "#94a3b8"
     accent: str = "#38bdf8"
+    accent_hover: str = "#0ea5e9"
+    accent_text: str = "#082032"
+    accent_border: str = "#8ddcff"
+    hero_bg: str = "#0b1323"
+    progress_bg: str = "#08101f"
+    table_bg: str = "#0a1426"
+    table_header_bg: str = "#111f35"
+    table_grid: str = "#1f334d"
+    selection_bg: str = "#123354"
+    success_text: str = "#86efac"
+    error_text: str = "#fca5a5"
+    info_text: str = "#93c5fd"
+    interactive_bg: str = "#101e32"
+    interactive_border: str = "#304860"
+    interactive_hover: str = "#17304f"
     target_color: str = "#22c55e"
     nogo_color: str = "#ef4444"
+
+    @classmethod
+    def for_mode(cls, mode: str) -> "Theme":
+        normalized = str(mode or "dark").strip().lower()
+        if normalized != "light":
+            return cls(mode="dark")
+
+        return cls(
+            mode="light",
+            background="#eff4fb",
+            panel="#ffffff",
+            panel_alt="#edf3fb",
+            panel_soft="#f6f9ff",
+            border="#c9d7e6",
+            text_primary="#263648",
+            text_muted="#607488",
+            accent="#3ea99a",
+            accent_hover="#319688",
+            accent_text="#ffffff",
+            accent_border="#2f9687",
+            hero_bg="#f4f8ff",
+            progress_bg="#e3edf8",
+            table_bg="#f9fbff",
+            table_header_bg="#e8f0fa",
+            table_grid="#c7d6e6",
+            selection_bg="#d4ebe6",
+            success_text="#1f8b5d",
+            error_text="#bc4b4b",
+            info_text="#2f6fa8",
+            interactive_bg="#e8eff9",
+            interactive_border="#b8cada",
+            interactive_hover="#dde8f5",
+            target_color="#1b9f62",
+            nogo_color="#c75a52",
+        )
 
 
 def load_focus_reset_config(path: Path | None = None) -> FocusResetConfig:

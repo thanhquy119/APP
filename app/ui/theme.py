@@ -1,30 +1,191 @@
+"""Shared Qt stylesheet for FocusGuardian UI."""
+
+from __future__ import annotations
+
+
+def _theme_tokens(is_dark: bool) -> dict[str, str]:
+    if is_dark:
+        return {
+            "bg_g1": "#121d2c",
+            "bg_g2": "#0d1623",
+            "bg_g3": "#0a111a",
+            "bg": "#0b131d",
+            "surface": "#131f2d",
+            "surface_alt": "#101a27",
+            "surface_soft": "#182637",
+            "border": "#2a394b",
+            "text": "#edf4fd",
+            "muted": "#9baec5",
+            "section_title": "#d9e5f5",
+            "header_bg_g1": "#152437",
+            "header_bg_g2": "#112133",
+            "header_border": "rgba(126, 154, 184, 0.24)",
+            "header_title": "#eaf3ff",
+            "header_subtitle": "#9eb4cb",
+            "titlebar_dot_close": "#ff5f57",
+            "titlebar_dot_close_hover": "#ff736d",
+            "titlebar_dot_close_pressed": "#e14f49",
+            "titlebar_dot_min": "#febc2e",
+            "titlebar_dot_min_hover": "#ffca4c",
+            "titlebar_dot_min_pressed": "#dea225",
+            "titlebar_dot_max": "#28c840",
+            "titlebar_dot_max_hover": "#42d95a",
+            "titlebar_dot_max_pressed": "#1faa36",
+            "accent": "#59d5c0",
+            "accent_hover": "#4abdaa",
+            "accent_secondary": "#86a9ff",
+            "warning": "#efbd78",
+            "danger": "#ef9d95",
+            "accent_text": "#07251f",
+            "input": "#0f1927",
+            "state_badge_text": "#dbe7f7",
+            "state_badge_border": "rgba(136, 158, 183, 0.30)",
+            "state_badge_bg": "rgba(108, 130, 154, 0.16)",
+            "summary_bg": "#162334",
+            "camera_bg": "#101c2b",
+            "camera_empty_g1": "#182738",
+            "camera_empty_g2": "#121e2d",
+            "camera_icon_ring_bg": "rgba(134, 169, 255, 0.12)",
+            "camera_icon_ring_border": "rgba(134, 169, 255, 0.30)",
+            "camera_empty_title": "#e4edf9",
+            "camera_empty_hint": "#8ea2ba",
+            "retry_btn_bg": "rgba(134, 169, 255, 0.16)",
+            "retry_btn_border": "rgba(134, 169, 255, 0.32)",
+            "retry_btn_text": "#dce8fb",
+            "status_strip_bg": "#142436",
+            "status_chip_bg": "rgba(127, 150, 176, 0.09)",
+            "status_label": "#88a0ba",
+            "status_value": "#d8e6f7",
+            "metric_row_bg": "rgba(127, 150, 176, 0.08)",
+            "metric_row_border": "rgba(127, 150, 176, 0.15)",
+            "metric_divider": "rgba(127, 150, 176, 0.20)",
+            "metric_row_icon": "#98aec8",
+            "metric_row_value": "#f4f8ff",
+            "coach_badge_bg": "rgba(89, 213, 192, 0.18)",
+            "coach_badge_border": "rgba(89, 213, 192, 0.30)",
+            "coach_badge_text": "#caf8ef",
+            "sparkline_bg": "#121f30",
+            "button_bg": "#223449",
+            "button_hover": "#293f58",
+            "button_pressed": "#1b2d42",
+            "ghost_text": "#c8d8ed",
+            "icon_btn_bg": "#25384d",
+            "icon_btn_hover": "#2b4561",
+            "icon_btn_text": "#d4e4f8",
+            "secondary_btn_bg": "#2a3f58",
+            "secondary_btn_hover": "#334c68",
+            "group_border": "#2a3b4f",
+            "progress_bg": "#162334",
+            "progress_border": "#2f465e",
+            "cycle_bg": "#1a2a3f",
+            "cycle_border": "#34506f",
+            "break_dim": "rgba(4, 8, 14, 185)",
+            "break_card": "#182536",
+            "break_card_border": "#3a516a",
+            "break_phase_text": "#cde6ff",
+        }
+
+    return {
+        "bg_g1": "#f3f9ff",
+        "bg_g2": "#edf5fd",
+        "bg_g3": "#f8fcff",
+        "bg": "#f2f8fe",
+        "surface": "#ffffff",
+        "surface_alt": "#f5f9ff",
+        "surface_soft": "#edf4fc",
+        "border": "#c5d6e8",
+        "text": "#182c41",
+        "muted": "#435d76",
+        "section_title": "#1f3a53",
+        "header_bg_g1": "#f7fbff",
+        "header_bg_g2": "#edf5fd",
+        "header_border": "rgba(118, 149, 183, 0.30)",
+        "header_title": "#1e3a53",
+        "header_subtitle": "#5d758e",
+        "titlebar_dot_close": "#ff5f57",
+        "titlebar_dot_close_hover": "#ff736d",
+        "titlebar_dot_close_pressed": "#e14f49",
+        "titlebar_dot_min": "#febc2e",
+        "titlebar_dot_min_hover": "#ffd159",
+        "titlebar_dot_min_pressed": "#dea225",
+        "titlebar_dot_max": "#2fca46",
+        "titlebar_dot_max_hover": "#4ddc63",
+        "titlebar_dot_max_pressed": "#24ab39",
+        "accent": "#2f9f90",
+        "accent_hover": "#238f81",
+        "accent_secondary": "#3f6fb5",
+        "warning": "#b9792f",
+        "danger": "#b9524d",
+        "accent_text": "#ffffff",
+        "input": "#ffffff",
+        "state_badge_text": "#284663",
+        "state_badge_border": "rgba(93, 125, 161, 0.30)",
+        "state_badge_bg": "rgba(122, 156, 194, 0.13)",
+        "summary_bg": "#f6faff",
+        "camera_bg": "#f6fbff",
+        "camera_empty_g1": "#f0f6fd",
+        "camera_empty_g2": "#e7f0fb",
+        "camera_icon_ring_bg": "rgba(63, 111, 181, 0.12)",
+        "camera_icon_ring_border": "rgba(63, 111, 181, 0.28)",
+        "camera_empty_title": "#2a435e",
+        "camera_empty_hint": "#68819a",
+        "retry_btn_bg": "rgba(63, 111, 181, 0.12)",
+        "retry_btn_border": "rgba(63, 111, 181, 0.28)",
+        "retry_btn_text": "#2e567f",
+        "status_strip_bg": "#f2f8ff",
+        "status_chip_bg": "rgba(106, 137, 170, 0.12)",
+        "status_label": "#4f6780",
+        "status_value": "#1f3a55",
+        "metric_row_bg": "rgba(104, 136, 170, 0.10)",
+        "metric_row_border": "rgba(104, 136, 170, 0.22)",
+        "metric_divider": "rgba(104, 136, 170, 0.24)",
+        "metric_row_icon": "#4f6a85",
+        "metric_row_value": "#182f45",
+        "coach_badge_bg": "rgba(47, 159, 144, 0.15)",
+        "coach_badge_border": "rgba(47, 159, 144, 0.32)",
+        "coach_badge_text": "#1c6d62",
+        "sparkline_bg": "#edf5fe",
+        "button_bg": "#e6f0fb",
+        "button_hover": "#d8e7f8",
+        "button_pressed": "#cddff3",
+        "ghost_text": "#2f4d68",
+        "icon_btn_bg": "#e8f1fb",
+        "icon_btn_hover": "#d9e8f8",
+        "icon_btn_text": "#294a67",
+        "secondary_btn_bg": "#dfebf8",
+        "secondary_btn_hover": "#d1e3f6",
+        "group_border": "#c9d8e8",
+        "progress_bg": "#e7f1fb",
+        "progress_border": "#c3d5e9",
+        "cycle_bg": "#e7f1fc",
+        "cycle_border": "#b9cee5",
+        "break_dim": "rgba(133, 151, 174, 126)",
+        "break_card": "#ffffff",
+        "break_card_border": "#bfd0e2",
+        "break_phase_text": "#2d4c69",
+    }
+
+
 def get_stylesheet(is_dark: bool) -> str:
     """Return shared stylesheet for main windows/dialogs."""
-    _ = is_dark  # App now enforces a single dark theme.
-    colors = {
-        "bg": "#0b131d",
-        "surface": "#131f2d",
-        "surface_alt": "#101a27",
-        "surface_soft": "#182637",
-        "border": "#2a394b",
-        "text": "#edf4fd",
-        "muted": "#9baec5",
-        "accent": "#59d5c0",
-        "accent_hover": "#4abdaa",
-        "accent_secondary": "#86a9ff",
-        "warning": "#efbd78",
-        "danger": "#ef9d95",
-        "accent_text": "#07251f",
-        "input": "#0f1927",
-    }
+    colors = _theme_tokens(bool(is_dark))
 
     return f"""
         QMainWindow, QDialog {{
             background-color: qlineargradient(
                 x1: 0, y1: 0, x2: 1, y2: 1,
-                stop: 0 #121d2c,
-                stop: 0.45 #0d1623,
-                stop: 1 #0a111a
+                stop: 0 {colors['bg_g1']},
+                stop: 0.45 {colors['bg_g2']},
+                stop: 1 {colors['bg_g3']}
+            );
+        }}
+
+        QWidget#appRoot {{
+            background-color: qlineargradient(
+                x1: 0, y1: 0, x2: 1, y2: 1,
+                stop: 0 {colors['bg_g1']},
+                stop: 0.45 {colors['bg_g2']},
+                stop: 1 {colors['bg_g3']}
             );
         }}
 
@@ -52,10 +213,86 @@ def get_stylesheet(is_dark: bool) -> str:
             line-height: 1.45;
         }}
 
+        QFrame#topHeaderBar {{
+            background-color: transparent;
+            border: none;
+            border-radius: 12px;
+        }}
+
+        QFrame#topHeaderBar[maximized="true"] {{
+            border-radius: 0px;
+        }}
+
+        QLabel#topHeaderTitle {{
+            font-size: 15px;
+            font-weight: 680;
+            color: {colors['header_title']};
+            letter-spacing: 0.2px;
+        }}
+
+        QWidget#titleBarDotsHost {{
+            background: transparent;
+        }}
+
+        QToolButton#titleBarCloseDot,
+        QToolButton#titleBarMinDot,
+        QToolButton#titleBarMaxDot {{
+            min-width: 12px;
+            max-width: 12px;
+            min-height: 12px;
+            max-height: 12px;
+            border: none;
+            border-radius: 6px;
+            padding: 0px;
+            margin: 0px;
+        }}
+
+        QToolButton#titleBarCloseDot {{
+            background-color: {colors['titlebar_dot_close']};
+        }}
+
+        QToolButton#titleBarCloseDot:hover {{
+            background-color: {colors['titlebar_dot_close_hover']};
+        }}
+
+        QToolButton#titleBarCloseDot:pressed {{
+            background-color: {colors['titlebar_dot_close_pressed']};
+        }}
+
+        QToolButton#titleBarMinDot {{
+            background-color: {colors['titlebar_dot_min']};
+        }}
+
+        QToolButton#titleBarMinDot:hover {{
+            background-color: {colors['titlebar_dot_min_hover']};
+        }}
+
+        QToolButton#titleBarMinDot:pressed {{
+            background-color: {colors['titlebar_dot_min_pressed']};
+        }}
+
+        QToolButton#titleBarMaxDot {{
+            background-color: {colors['titlebar_dot_max']};
+        }}
+
+        QToolButton#titleBarMaxDot:hover {{
+            background-color: {colors['titlebar_dot_max_hover']};
+        }}
+
+        QToolButton#titleBarMaxDot:pressed {{
+            background-color: {colors['titlebar_dot_max_pressed']};
+        }}
+
+        QLabel#topHeaderSubtitle {{
+            font-size: 12px;
+            font-weight: 500;
+            color: {colors['header_subtitle']};
+        }}
+
         QLabel#sectionTitle {{
             font-size: 14px;
             font-weight: 650;
-            color: #d9e5f5;
+            color: {colors['section_title']};
             letter-spacing: 0.3px;
         }}
 
@@ -66,10 +303,10 @@ def get_stylesheet(is_dark: bool) -> str:
         }}
 
         QLabel#stateBadge {{
-            color: #dbe7f7;
-            border: 1px solid rgba(136, 158, 183, 0.30);
+            color: {colors['state_badge_text']};
+            border: 1px solid {colors['state_badge_border']};
             border-radius: 999px;
-            background-color: rgba(108, 130, 154, 0.16);
+            background-color: {colors['state_badge_bg']};
             padding: 5px 12px;
             font-weight: 650;
         }}
@@ -82,7 +319,7 @@ def get_stylesheet(is_dark: bool) -> str:
         }}
 
         QFrame[summaryCard="true"] {{
-            background-color: #162334;
+            background-color: {colors['summary_bg']};
             border-radius: 16px;
             border: 1px solid rgba(128, 150, 176, 0.18);
         }}
@@ -93,6 +330,10 @@ def get_stylesheet(is_dark: bool) -> str:
         }}
 
         QScrollArea#rightColumnScroll > QWidget > QWidget {{
+            background: transparent;
+        }}
+
+        QScrollArea#rightColumnScroll QWidget#qt_scrollarea_viewport {{
             background: transparent;
         }}
 
@@ -122,7 +363,7 @@ def get_stylesheet(is_dark: bool) -> str:
         }}
 
         QFrame#cameraFrame {{
-            background-color: #101c2b;
+            background-color: {colors['camera_bg']};
             border-radius: 14px;
             border: 1px solid rgba(120, 142, 168, 0.20);
         }}
@@ -130,16 +371,16 @@ def get_stylesheet(is_dark: bool) -> str:
         QWidget#cameraEmptyState {{
             background-color: qlineargradient(
                 x1: 0, y1: 0, x2: 1, y2: 1,
-                stop: 0 #182738,
-                stop: 1 #121e2d
+                stop: 0 {colors['camera_empty_g1']},
+                stop: 1 {colors['camera_empty_g2']}
             );
             border-radius: 14px;
             border: 1px solid rgba(130, 156, 184, 0.22);
         }}
 
         QFrame#cameraEmptyIconRing {{
-            background-color: rgba(134, 169, 255, 0.12);
-            border: 1px solid rgba(134, 169, 255, 0.30);
+            background-color: {colors['camera_icon_ring_bg']};
+            border: 1px solid {colors['camera_icon_ring_border']};
             border-radius: 28px;
             min-width: 56px;
             min-height: 56px;
@@ -155,7 +396,7 @@ def get_stylesheet(is_dark: bool) -> str:
         QLabel#cameraEmptyTitle {{
             font-size: 16px;
             font-weight: 700;
-            color: #e4edf9;
+            color: {colors['camera_empty_title']};
         }}
 
         QLabel#cameraEmptySubtitle {{
@@ -165,13 +406,13 @@ def get_stylesheet(is_dark: bool) -> str:
 
         QLabel#cameraEmptyHint {{
             font-size: 11px;
-            color: #8ea2ba;
+            color: {colors['camera_empty_hint']};
         }}
 
         QPushButton#cameraRetryButton {{
-            background-color: rgba(134, 169, 255, 0.16);
-            border: 1px solid rgba(134, 169, 255, 0.32);
-            color: #dce8fb;
+            background-color: {colors['retry_btn_bg']};
+            border: 1px solid {colors['retry_btn_border']};
+            color: {colors['retry_btn_text']};
             border-radius: 11px;
             padding: 7px 14px;
             font-size: 12px;
@@ -183,38 +424,38 @@ def get_stylesheet(is_dark: bool) -> str:
         }}
 
         QFrame#statusStrip {{
-            background-color: #142436;
+            background-color: {colors['status_strip_bg']};
             border: 1px solid rgba(127, 150, 176, 0.20);
             border-radius: 12px;
         }}
 
         QFrame#statusChip {{
-            background-color: rgba(127, 150, 176, 0.09);
+            background-color: {colors['status_chip_bg']};
             border: 1px solid rgba(127, 150, 176, 0.18);
             border-radius: 10px;
         }}
 
         QLabel#statusLabel {{
-            color: #88a0ba;
+            color: {colors['status_label']};
             font-size: 10px;
             font-weight: 600;
         }}
 
         QLabel#statusValue {{
-            color: #d8e6f7;
+            color: {colors['status_value']};
             font-size: 11px;
             font-weight: 700;
         }}
 
         QFrame#metricRow {{
-            background-color: rgba(127, 150, 176, 0.08);
-            border: 1px solid rgba(127, 150, 176, 0.15);
+            background-color: {colors['metric_row_bg']};
+            border: 1px solid {colors['metric_row_border']};
             border-radius: 10px;
             min-height: 38px;
         }}
 
         QFrame#metricDivider {{
-            background-color: rgba(127, 150, 176, 0.20);
+            background-color: {colors['metric_divider']};
             border: none;
             min-height: 1px;
             max-height: 1px;
@@ -222,7 +463,7 @@ def get_stylesheet(is_dark: bool) -> str:
 
         QLabel#metricRowIcon {{
             font-size: 11px;
-            color: #98aec8;
+            color: {colors['metric_row_icon']};
             font-weight: 700;
         }}
 
@@ -235,7 +476,7 @@ def get_stylesheet(is_dark: bool) -> str:
         QLabel#metricRowValue {{
             font-size: 16px;
             font-weight: 650;
-            color: #f4f8ff;
+            color: {colors['metric_row_value']};
             min-width: 88px;
         }}
 
@@ -249,19 +490,19 @@ def get_stylesheet(is_dark: bool) -> str:
             border-radius: 999px;
             padding: 8px 12px;
             font-weight: 650;
-            background-color: rgba(89, 213, 192, 0.18);
-            color: #caf8ef;
-            border: 1px solid rgba(89, 213, 192, 0.30);
+            background-color: {colors['coach_badge_bg']};
+            color: {colors['coach_badge_text']};
+            border: 1px solid {colors['coach_badge_border']};
         }}
 
         QFrame#trendSparkline {{
-            background-color: #121f30;
+            background-color: {colors['sparkline_bg']};
             border: 1px solid rgba(127, 150, 176, 0.20);
             border-radius: 12px;
         }}
 
         QPushButton {{
-            background-color: #223449;
+            background-color: {colors['button_bg']};
             color: {colors['text']};
             border: 1px solid rgba(123, 147, 174, 0.30);
             border-radius: 11px;
@@ -271,12 +512,12 @@ def get_stylesheet(is_dark: bool) -> str:
         }}
 
         QPushButton:hover {{
-            background-color: #293f58;
+            background-color: {colors['button_hover']};
             border-color: rgba(140, 170, 204, 0.44);
         }}
 
         QPushButton:pressed {{
-            background-color: #1b2d42;
+            background-color: {colors['button_pressed']};
         }}
 
         QPushButton:disabled {{
@@ -300,32 +541,32 @@ def get_stylesheet(is_dark: bool) -> str:
         QPushButton#ghostButton {{
             background-color: transparent;
             border-color: rgba(123, 147, 174, 0.26);
-            color: #c8d8ed;
+            color: {colors['ghost_text']};
         }}
 
         QPushButton#iconButton {{
-            background-color: #25384d;
+            background-color: {colors['icon_btn_bg']};
             border: 1px solid rgba(135, 163, 193, 0.30);
             border-radius: 11px;
             padding: 0px;
             font-size: 12px;
             font-weight: 600;
-            color: #d4e4f8;
+            color: {colors['icon_btn_text']};
         }}
 
         QPushButton#iconButton:hover {{
-            background-color: #2b4561;
+            background-color: {colors['icon_btn_hover']};
             border-color: rgba(151, 181, 214, 0.42);
         }}
 
         QPushButton#secondaryButton {{
-            background-color: #2a3f58;
+            background-color: {colors['secondary_btn_bg']};
             border-color: rgba(140, 167, 198, 0.36);
-            color: #d8e7fa;
+            color: {colors['text']};
         }}
 
         QPushButton#secondaryButton:hover {{
-            background-color: #334c68;
+            background-color: {colors['secondary_btn_hover']};
             border-color: rgba(159, 189, 224, 0.45);
         }}
 
@@ -336,8 +577,8 @@ def get_stylesheet(is_dark: bool) -> str:
         }}
 
         QGroupBox {{
-            border: 1px solid #2a3b4f;
-            border-radius: 10px;
+            border: 1px solid {colors['group_border']};
+            border-radius: 8px;
             margin-top: 14px;
             padding: 14px;
             font-weight: 600;
@@ -420,8 +661,8 @@ def get_stylesheet(is_dark: bool) -> str:
         }}
 
         QProgressBar {{
-            background-color: #162334;
-            border: 1px solid #2f465e;
+            background-color: {colors['progress_bg']};
+            border: 1px solid {colors['progress_border']};
             border-radius: 8px;
             text-align: center;
             color: {colors['text']};
@@ -433,13 +674,13 @@ def get_stylesheet(is_dark: bool) -> str:
         }}
 
         QProgressBar#cycleProgress {{
-            background-color: #1a2a3f;
-            border: 1px solid #34506f;
+            background-color: {colors['cycle_bg']};
+            border: 1px solid {colors['cycle_border']};
             border-radius: 6px;
         }}
 
         QProgressBar#cycleProgress::chunk {{
-            background-color: #64d8bf;
+            background-color: {colors['accent']};
             border-radius: 5px;
         }}
 
@@ -448,19 +689,19 @@ def get_stylesheet(is_dark: bool) -> str:
         }}
 
         QFrame#breakOverlayDim {{
-            background-color: rgba(4, 8, 14, 185);
+            background-color: {colors['break_dim']};
         }}
 
         QFrame#breakOverlayCard {{
-            background-color: #182536;
-            border: 1px solid #3a516a;
+            background-color: {colors['break_card']};
+            border: 1px solid {colors['break_card_border']};
             border-radius: 16px;
         }}
 
         QLabel#breakPhaseText {{
             font-size: 18px;
             font-weight: 700;
-            color: #cde6ff;
+            color: {colors['break_phase_text']};
         }}
 
         QLabel#breakCountdownText {{

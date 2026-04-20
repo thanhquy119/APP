@@ -31,6 +31,11 @@ if models_dir.exists():
     for model_file in models_dir.glob('*.task'):
         datas.append((str(model_file), 'assets/models'))
 
+# Include Google service account credentials for bundled EXE runtime.
+service_account_file = ROOT_DIR / 'google_service_account.json'
+if service_account_file.exists():
+    datas.append((str(service_account_file), '.'))
+
 # Hidden imports that PyInstaller might miss
 hiddenimports = [
     # PyQt6
@@ -52,11 +57,22 @@ hiddenimports = [
     # OpenCV
     'cv2',
 
+    # Matplotlib is imported by some MediaPipe runtime paths
+    'matplotlib',
+    'matplotlib.pyplot',
+    'matplotlib.backends.backend_agg',
+
     # NumPy
     'numpy',
 
     # Requests (for model download)
     'requests',
+
+    # Google Sheets sync
+    'gspread',
+    'google.auth',
+    'google.oauth2',
+    'google.oauth2.service_account',
 
     # App modules
     'app',
@@ -69,13 +85,14 @@ hiddenimports = [
     'app.logic',
     'app.logic.focus_engine',
     'app.logic.session_analytics',
+    'app.logic.google_sheets_sync',
+    'app.logic.personalization',
     'app.utils',
     'app.utils.ring_buffer',
     'app.utils.win_idle',
     'app.ui',
     'app.ui.main_window',
     'app.ui.settings_dialog',
-    'app.ui.mini_games',
     'app.ui.tray',
     'app.focus_reset_game',
     'app.focus_reset_game.config',
@@ -97,6 +114,30 @@ try:
     datas.extend(mediapipe_datas)
 except Exception:
     pass
+
+# Collect Matplotlib data files (mpl-data) required when imported at runtime.
+try:
+    from PyInstaller.utils.hooks import collect_data_files
+    matplotlib_datas = collect_data_files('matplotlib')
+    datas.extend(matplotlib_datas)
+except Exception:
+    pass
+
+# Main analysis
+a = Analysis(
+    ['main.py'],
+    pathex=[str(ROOT_DIR)],
+    binaries=[],
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[
+        'tkinter',
+        'IPython',
+        'jupyter',
+        'notebook',
         'doctest',
         'test',
         'tests',

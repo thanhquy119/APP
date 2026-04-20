@@ -11,23 +11,30 @@ Displays:
 import time
 import logging
 import math
+import sys
+from pathlib import Path
 from typing import Optional, TYPE_CHECKING, Dict, Any
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QSize, QVariantAnimation, QPointF, QEvent, QRectF
-from PyQt6.QtGui import QImage, QPixmap, QFont, QPainter, QColor, QPen, QConicalGradient, QBrush, QIcon
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QSize, QVariantAnimation, QPointF, QPoint, QEvent, QRectF
+from PyQt6.QtGui import QImage, QPixmap, QFont, QPainter, QColor, QPen, QConicalGradient, QRadialGradient, QBrush, QIcon
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFrame, QProgressBar,
     QSizePolicy, QScrollArea,
-    QMessageBox, QGraphicsDropShadowEffect, QDialog, QStyle, QGraphicsOpacityEffect
+    QGraphicsDropShadowEffect, QDialog, QGraphicsOpacityEffect, QToolButton
 )
 
 import cv2
 import numpy as np
 
 from ..logic.focus_engine import FocusState, FocusEngine, FrameFeatures
+from ..logic.google_sheets_sync import PROFILE_SCOPED_CONFIG_KEYS, PROFILE_SCOPED_DEFAULT_SETTINGS
 from ..logic.session_analytics import SessionAnalyticsStore
+from ..logic.zalo_alerts import ZaloAlertManager
+from ..logic.auth_manager import AuthManager
+from ..logic.focus_audio import FocusAudioManager
 from ..utils.win_idle import get_idle_seconds
+from .notice_dialog import NoticeDialog
 from .theme import get_stylesheet
 
 # Type hints for vision modules
@@ -74,6 +81,213 @@ STATE_ICONS = {
     FocusState.AWAY: "•",
     FocusState.UNCERTAIN: "•",
 }
+
+
+class TitleBarWidget(QFrame):
+    """Custom calm-tech title bar with macOS-style window dots."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("topHeaderBar")
+        self.setFixedHeight(40)
+        self._drag_start_pos: Optional[QPoint] = None
+        self._drag_start_window_pos: Optional[QPoint] = None
+        self._max_toggle_guard = False
+
+        root = QHBoxLayout(self)
+        root.setContentsMargins(12, 6, 12, 6)
+        root.setSpacing(10)
+
+        self.controls_host = QWidget()
+        self.controls_host.setObjectName("titleBarDotsHost")
+        controls = QHBoxLayout(self.controls_host)
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.setSpacing(7)
+
+        self.btn_close = self._create_control_button("titleBarCloseDot", "Đóng")
+        self.btn_min = self._create_control_button("titleBarMinDot", "Thu nhỏ")
+        self.btn_max = self._create_control_button("titleBarMaxDot", "Phóng to")
+
+        self.btn_min.clicked.connect(self._minimize_window)
+        self.btn_max.clicked.connect(self._toggle_max_restore)
+        self.btn_close.clicked.connect(self._close_window)
+
+        controls.addWidget(self.btn_min)
+        controls.addWidget(self.btn_max)
+        controls.addWidget(self.btn_close)
+
+        root.addStretch(1)
+        root.addWidget(self.controls_host, 0, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
+
+        self.sync_window_state()
+
+    def _create_control_button(self, object_name: str, tooltip: str) -> QToolButton:
+        button = QToolButton(self)
+        button.setObjectName(object_name)
+        button.setToolTip(tooltip)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        button.setText("")
+        button.setFixedSize(12, 12)
+        button.setAutoRaise(True)
+        return button
+
+    def _window(self) -> Optional[QWidget]:
+        window = self.window()
+        return window if isinstance(window, QWidget) else None
+
+    def set_title(self, title: str) -> None:
+        _ = title
+
+    def _is_window_maximized(self) -> bool:
+        window = self._window()
+        if window is None:
+            return False
+
+        if window.isMaximized() or (window.windowState() & Qt.WindowState.WindowMaximized):
+            return True
+
+        # Frameless windows on Windows can occasionally miss the maximized bit;
+        # fallback to geometry check against screen available area.
+        handle = window.windowHandle()
+        screen = handle.screen() if handle is not None else window.screen()
+        if screen is None:
+            return False
+
+        available = screen.availableGeometry()
+        frame = window.frameGeometry()
+        tol = 8
+
+        fills_horizontally = (
+            abs(frame.left() - available.left()) <= tol
+            and abs(frame.right() - available.right()) <= tol
+        )
+        fills_vertically = (
+            abs(frame.top() - available.top()) <= tol
+            and abs(frame.bottom() - available.bottom()) <= tol
+        )
+        return fills_horizontally and fills_vertically
+
+    def sync_window_state(self) -> None:
+        is_maximized = self._is_window_maximized()
+
+        self.setProperty("maximized", is_maximized)
+        self.btn_max.setProperty("windowMaximized", is_maximized)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.btn_max.style().unpolish(self.btn_max)
+        self.btn_max.style().polish(self.btn_max)
+
+        if is_maximized:
+            self.btn_max.setToolTip("Khôi phục")
+        else:
+            self.btn_max.setToolTip("Phóng to")
+
+    def _is_over_control(self, pos: QPointF) -> bool:
+        point = pos.toPoint()
+        if isinstance(self.childAt(point), QToolButton):
+            return True
+
+        if hasattr(self, "controls_host"):
+            local = self.controls_host.mapFrom(self, point)
+            if self.controls_host.rect().contains(local):
+                return True
+
+        return False
+
+    def _start_system_move(self) -> bool:
+        window = self._window()
+        if window is None:
+            return False
+
+        handle = window.windowHandle()
+        if handle is None or not hasattr(handle, "startSystemMove"):
+            return False
+
+        try:
+            return bool(handle.startSystemMove())
+        except RuntimeError:
+            return False
+
+    def _minimize_window(self) -> None:
+        window = self._window()
+        if window is not None:
+            window.showMinimized()
+
+    def _clear_max_toggle_guard(self) -> None:
+        self._max_toggle_guard = False
+
+    def _toggle_max_restore(self) -> None:
+        window = self._window()
+        if window is None:
+            return
+
+        if self._max_toggle_guard:
+            return
+        self._max_toggle_guard = True
+        QTimer.singleShot(0, self._clear_max_toggle_guard)
+
+        ui_maximized = bool(self.btn_max.property("windowMaximized"))
+        window_maximized = self._is_window_maximized()
+        is_maximized = ui_maximized or window_maximized
+
+        if is_maximized:
+            window.showNormal()
+        else:
+            window.showMaximized()
+
+        QTimer.singleShot(0, self.sync_window_state)
+        QTimer.singleShot(120, self.sync_window_state)
+
+    def _close_window(self) -> None:
+        window = self._window()
+        if window is not None:
+            window.close()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and not self._is_over_control(event.position()):
+            if self._start_system_move():
+                event.accept()
+                return
+
+            window = self._window()
+            if window is not None and not window.isMaximized():
+                self._drag_start_pos = event.globalPosition().toPoint()
+                self._drag_start_window_pos = window.pos()
+                event.accept()
+                return
+
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (
+            event.buttons() & Qt.MouseButton.LeftButton
+            and self._drag_start_pos is not None
+            and self._drag_start_window_pos is not None
+        ):
+            window = self._window()
+            if window is not None and not window.isMaximized():
+                delta = event.globalPosition().toPoint() - self._drag_start_pos
+                window.move(self._drag_start_window_pos + delta)
+                event.accept()
+                return
+
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_start_pos = None
+        self._drag_start_window_pos = None
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and not self._is_over_control(event.position()):
+            controls_left = self.controls_host.x() if hasattr(self, "controls_host") else self.width()
+            if event.position().x() < (controls_left - 8):
+                self._toggle_max_restore()
+                event.accept()
+                return
+
+        super().mouseDoubleClickEvent(event)
 
 
 class CameraWidget(QFrame):
@@ -231,6 +445,11 @@ class LiveStatusStrip(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("statusStrip")
+        self.is_dark = True
+        self._last_stream = "Disconnected"
+        self._last_face = "No face"
+        self._last_lighting = "Unknown"
+        self._last_model = "Initializing"
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
@@ -262,6 +481,11 @@ class LiveStatusStrip(QFrame):
 
     def set_status(self, stream: str, face: str, lighting: str, model: str) -> None:
         """Refresh runtime statuses shown in the strip."""
+        self._last_stream = stream
+        self._last_face = face
+        self._last_lighting = lighting
+        self._last_model = model
+
         self.values["stream"].setText(stream)
         self.values["face"].setText(face)
         self.values["lighting"].setText(lighting)
@@ -269,13 +493,23 @@ class LiveStatusStrip(QFrame):
 
         stream_lower = stream.lower()
         if stream_lower == "live":
-            stream_color = "#7ef4d4"
+            stream_color = "#7ef4d4" if self.is_dark else "#0f7c68"
         elif stream_lower == "paused":
-            stream_color = "#ffe1a0"
+            stream_color = "#ffe1a0" if self.is_dark else "#8b6125"
         else:
-            stream_color = "#f7b3b3"
+            stream_color = "#f7b3b3" if self.is_dark else "#9f3e39"
 
         self.values["stream"].setStyleSheet(f"color: {stream_color}; font-weight: 700;")
+
+    def update_theme(self, is_dark: bool) -> None:
+        """Apply theme-aware text accents for the status strip."""
+        self.is_dark = bool(is_dark)
+        self.set_status(
+            stream=self._last_stream,
+            face=self._last_face,
+            lighting=self._last_lighting,
+            model=self._last_model,
+        )
 
 class FocusScoreWidget(QFrame):
     """Circular widget showing focus score."""
@@ -332,15 +566,15 @@ class FocusScoreWidget(QFrame):
         """Keep the ring glow subtle and contextual."""
         if self.state in (FocusState.ON_SCREEN_READING, FocusState.OFFSCREEN_WRITING) and self._target_score >= 78:
             self._shadow.setBlurRadius(22)
-            self._shadow.setColor(QColor(89, 213, 192, 72))
+            self._shadow.setColor(QColor(89, 213, 192, 72) if self.is_dark else QColor(62, 169, 154, 98))
             self._shadow.setOffset(0, 2)
         elif self.state in (FocusState.PHONE_DISTRACTION, FocusState.DROWSY_FATIGUE) or self._target_score < 58:
             self._shadow.setBlurRadius(18)
-            self._shadow.setColor(QColor(239, 157, 149, 58))
+            self._shadow.setColor(QColor(239, 157, 149, 58) if self.is_dark else QColor(193, 96, 90, 86))
             self._shadow.setOffset(0, 2)
         else:
             self._shadow.setBlurRadius(14)
-            self._shadow.setColor(QColor(10, 20, 34, 72))
+            self._shadow.setColor(QColor(10, 20, 34, 72) if self.is_dark else QColor(98, 121, 149, 64))
             self._shadow.setOffset(0, 2)
 
     def paintEvent(self, event):
@@ -354,14 +588,23 @@ class FocusScoreWidget(QFrame):
         x = (rect.width() - size) // 2
         y = (rect.height() - size) // 2
 
+        if not self.is_dark:
+            halo = QRadialGradient(QPointF(x + (size / 2), y + (size / 2)), (size - 8) / 2)
+            halo.setColorAt(0.0, QColor(255, 255, 255, 180))
+            halo.setColorAt(0.72, QColor(216, 230, 245, 88))
+            halo.setColorAt(1.0, QColor(194, 211, 231, 24))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(halo))
+            painter.drawEllipse(x + 2, y + 2, size - 4, size - 4)
+
         # Draw inner base for a refined ring look.
-        inner_color = QColor("#102031") if self.is_dark else QColor("#eef3f8")
+        inner_color = QColor("#102031") if self.is_dark else QColor("#f7fbff")
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(inner_color)
         painter.drawEllipse(x + 22, y + 22, size - 44, size - 44)
 
         # Draw track (background arc)
-        track_color = "#2a3a4c" if self.is_dark else "#d4d4d8"
+        track_color = "#2a3a4c" if self.is_dark else "#c6d8ea"
         track_pen = QPen(QColor(track_color))
         track_pen.setWidth(10)
         track_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -405,7 +648,7 @@ class FocusScoreWidget(QFrame):
 
     def update_theme(self, is_dark: bool):
         self.is_dark = is_dark
-        self.text_color = QColor("#fafafa") if is_dark else QColor("#18181b")
+        self.text_color = QColor("#fafafa") if is_dark else QColor("#173247")
         self._update_glow()
         self.update()
 
@@ -427,9 +670,9 @@ class BreathingCircleWidget(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         rect = self.rect().adjusted(8, 8, -8, -8)
-        center = rect.center()
-        max_radius = min(rect.width(), rect.height()) * 0.42
-        radius = (max_radius * 0.55) + (max_radius * 0.35 * self._phase)
+        center = QPointF(rect.center())
+        max_radius = float(min(rect.width(), rect.height()) * 0.42)
+        radius = float((max_radius * 0.55) + (max_radius * 0.35 * self._phase))
 
         painter.setPen(QPen(QColor(130, 176, 255, 90), 2))
         painter.setBrush(QColor(48, 96, 170, 35))
@@ -605,6 +848,11 @@ class TrendSparkline(QFrame):
         self.setMinimumHeight(96)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._values: list[float] = []
+        self.is_dark = True
+
+    def update_theme(self, is_dark: bool) -> None:
+        self.is_dark = bool(is_dark)
+        self.update()
 
     def set_values(self, values: list[float]):
         """Store normalized values and trigger redraw."""
@@ -618,17 +866,18 @@ class TrendSparkline(QFrame):
         self.update()
 
     def paintEvent(self, event):
-        """Draw a minimal trend chart suitable for dense dark-mode cards."""
+        """Draw a minimal trend chart that adapts to dark/light themes."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         chart_rect = self.rect().adjusted(8, 8, -8, -8)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#111f2f"))
+        chart_bg = QColor("#111f2f") if self.is_dark else QColor("#edf3fb")
+        painter.setBrush(chart_bg)
         painter.drawRoundedRect(chart_rect, 10, 10)
 
         if len(self._values) < 2:
-            painter.setPen(QColor("#7b8aa0"))
+            painter.setPen(QColor("#7b8aa0") if self.is_dark else QColor("#607488"))
             painter.setFont(QFont("Segoe UI", 9))
             painter.drawText(chart_rect, Qt.AlignmentFlag.AlignCenter, "Đang thu thập dữ liệu xu hướng...")
             return
@@ -644,7 +893,7 @@ class TrendSparkline(QFrame):
         width = max(1.0, float(right - left))
         height = max(1.0, float(bottom - top))
 
-        mid_pen = QPen(QColor("#2c3f56"))
+        mid_pen = QPen(QColor("#2c3f56") if self.is_dark else QColor("#b8cade"))
         mid_pen.setWidth(1)
         painter.setPen(mid_pen)
         mid_y = int(top + (height * 0.5))
@@ -660,11 +909,11 @@ class TrendSparkline(QFrame):
 
         slope = self._values[-1] - self._values[0]
         if slope <= -6:
-            line_color = QColor("#e9b16e")
+            line_color = QColor("#e9b16e") if self.is_dark else QColor("#b87832")
         elif slope >= 6:
-            line_color = QColor("#74d8c6")
+            line_color = QColor("#74d8c6") if self.is_dark else QColor("#218f7b")
         else:
-            line_color = QColor("#8db1ff")
+            line_color = QColor("#8db1ff") if self.is_dark else QColor("#4f75bf")
 
         line_pen = QPen(line_color)
         line_pen.setWidth(2)
@@ -687,6 +936,7 @@ class FocusGuidanceWidget(QFrame):
         super().__init__(parent)
         self.setObjectName("guidanceCard")
         self.setProperty("summaryCard", True)
+        self.is_dark = True
 
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(12)
@@ -698,7 +948,7 @@ class FocusGuidanceWidget(QFrame):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
 
-        title = QLabel("Khuyến nghị hiện tại")
+        title = QLabel("Trạng thái hiện tại")
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
 
@@ -737,11 +987,19 @@ class FocusGuidanceWidget(QFrame):
         self.detail_label.setText(detail)
         self.state_context.setText(f"Trạng thái: {state_text}")
 
-        badge_styles = {
-            "good": ("#17372f", "#8ff5dd", "#285a4e"),
-            "watch": ("#3a2d14", "#ffd38a", "#6f5328"),
-            "break": ("#462218", "#ffbea7", "#7b3b2d"),
-        }
+        if self.is_dark:
+            badge_styles = {
+                "good": ("#17372f", "#8ff5dd", "#285a4e"),
+                "watch": ("#3a2d14", "#ffd38a", "#6f5328"),
+                "break": ("#462218", "#ffbea7", "#7b3b2d"),
+            }
+        else:
+            badge_styles = {
+                "good": ("#e3f6f1", "#1f6e62", "#9bd9cb"),
+                "watch": ("#fff2dd", "#7c5820", "#e9cf9c"),
+                "break": ("#fde9e4", "#8a3f35", "#e6b4aa"),
+            }
+
         bg, fg, border = badge_styles.get(mode, badge_styles["good"])
         self.decision_badge.setStyleSheet(
             "border-radius: 999px; padding: 8px 12px;"
@@ -760,6 +1018,10 @@ class FocusGuidanceWidget(QFrame):
         except (TypeError, ValueError):
             opacity = 1.0
         self._detail_opacity.setOpacity(opacity)
+
+    def update_theme(self, is_dark: bool) -> None:
+        """Store current theme mode for dynamic badge styling."""
+        self.is_dark = bool(is_dark)
 
 
 class TrendInsightWidget(QFrame):
@@ -780,7 +1042,7 @@ class TrendInsightWidget(QFrame):
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(8)
 
-        title = QLabel("Insight nhanh")
+        title = QLabel("Insight")
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
 
@@ -961,20 +1223,40 @@ class MainWindow(QMainWindow):
     score_changed = pyqtSignal(float)
     break_suggested = pyqtSignal()
     config_changed = pyqtSignal(dict)
+    logout_requested = pyqtSignal()
 
-    def __init__(self, config: Optional[dict] = None):
+    def __init__(self, config: Optional[dict] = None, auth_manager: Optional[AuthManager] = None):
         super().__init__()
         self.config = config or {}
-        self.config["theme_mode"] = "dark"
+        self.config.setdefault("theme_mode", "light")
+        self.config.setdefault("enable_focus_audio", False)
+        self.config.setdefault("focus_audio_track", "rain_light")
+        self.config.setdefault("focus_audio_volume", 30)
         self.config["show_overlay"] = False
+        self.config["enable_personalization"] = True
+        self.config["auto_apply_personalization"] = True
+        self._vision_init_error = ""
+
+        self.auth_manager = auth_manager or AuthManager(self.config)
+        self.auth_manager.configure(self.config)
 
         # Session analytics and personalization
-        self.analytics_store = SessionAnalyticsStore()
+        self.analytics_store = SessionAnalyticsStore(google_config=self.config)
+        self.zalo_alert_manager = ZaloAlertManager(self.config)
+        self.focus_audio_manager = FocusAudioManager(config=self.config, parent=self)
         self.profile_name = self._get_profile_name()
+        self._reset_profile_scoped_settings_to_defaults()
+        self._load_profile_scoped_settings_from_google(seed_if_missing=True)
         self.session_started_at: Optional[float] = None
         self.state_time_by_state: Dict[str, float] = {
             state.name: 0.0 for state in FocusState
         }
+        self.raw_state_time_by_state: Dict[str, float] = {
+            state.name: 0.0 for state in FocusState
+        }
+        self.display_state: FocusState = FocusState.UNCERTAIN
+        self._display_focused_state: Optional[FocusState] = None
+        self._display_hold_until: float = 0.0
         self._last_recommendation: Dict[str, Any] = {}
         self.focus_trend_samples: list[float] = []
 
@@ -1007,6 +1289,17 @@ class MainWindow(QMainWindow):
             self._score_drop_speed_per_sec,
             float(self.config.get("score_rise_speed_per_sec", 10.0)),
         )
+        self._display_uncertain_hold_seconds = max(
+            0.8,
+            float(self.config.get("display_uncertain_hold_seconds", 2.0)),
+        )
+        self._last_state_frame_timestamp: Optional[float] = None
+
+        # Frameless-window edge resize support.
+        self._resize_border_px = 6
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
 
     def _init_vision(self):
         """Initialize vision components using MediaPipe Tasks API."""
@@ -1058,8 +1351,10 @@ class MainWindow(QMainWindow):
                     )
                 )
                 self.phone_detector.initialize()
+                self.config["phone_detection_mode"] = "heuristic"
 
             self.vision_available = True
+            self._vision_init_error = ""
             logger.info("Vision modules initialized successfully")
 
         except Exception as e:
@@ -1068,24 +1363,27 @@ class MainWindow(QMainWindow):
             self.vision_pipeline = None
             self.phone_detector = None
             self.vision_available = False
+            self._vision_init_error = f"{type(e).__name__}: {e}"
 
         self.camera_running = False
 
     def _init_engine(self):
         """Initialize focus engine."""
-        self.engine = FocusEngine()
+        self.engine = FocusEngine(profile_name=self.profile_name)
         self._apply_focus_engine_config()
         self.current_state = FocusState.UNCERTAIN
         self.current_score = 100.0
 
     def _apply_focus_engine_config(self) -> None:
         """Apply UI/config threshold values to FocusEngine runtime config."""
+        self.engine.clear_personalization()
         cfg = self.engine.config
         cfg.head_down_pitch_threshold = float(self.config.get("head_down_threshold", cfg.head_down_pitch_threshold))
         cfg.head_away_yaw_threshold = float(self.config.get("look_away_threshold", cfg.head_away_yaw_threshold))
         cfg.write_score_threshold = float(self.config.get("write_score_threshold", cfg.write_score_threshold))
         cfg.drowsy_closure_ratio = float(self.config.get("eye_closure_threshold", cfg.drowsy_closure_ratio))
         cfg.drowsy_ear_threshold = float(self.config.get("ear_threshold", cfg.drowsy_ear_threshold))
+        cfg.perclos_threshold = float(self.config.get("perclos_threshold", cfg.perclos_threshold))
 
         # Eye-gaze and head-down disambiguation controls.
         cfg.eye_look_down_threshold = float(self.config.get("eye_look_down_threshold", cfg.eye_look_down_threshold))
@@ -1107,22 +1405,176 @@ class MainWindow(QMainWindow):
         )
 
         cfg.hysteresis_enter = max(0.15, float(self.config.get("hysteresis_enter", cfg.hysteresis_enter)))
+        cfg.focused_state_hold_seconds = max(
+            0.6,
+            float(self.config.get("focused_state_hold_seconds", cfg.focused_state_hold_seconds)),
+        )
+        cfg.uncertain_short_soft_seconds = max(
+            0.6,
+            float(self.config.get("uncertain_short_soft_seconds", cfg.uncertain_short_soft_seconds)),
+        )
+        cfg.uncertain_behavior_window_seconds = max(
+            cfg.uncertain_short_soft_seconds,
+            float(self.config.get("uncertain_behavior_window_seconds", cfg.uncertain_behavior_window_seconds)),
+        )
         cfg.score_recover_rate = max(1.0, float(self.config.get("score_recover_rate", cfg.score_recover_rate)))
         cfg.score_drop_rate = max(1.0, float(self.config.get("score_drop_rate", cfg.score_drop_rate)))
+        cfg.score_noise_softening_seconds = max(
+            0.4,
+            float(self.config.get("score_noise_softening_seconds", cfg.score_noise_softening_seconds)),
+        )
+        cfg.score_confidence_floor_focused = max(
+            0.2,
+            min(0.95, float(self.config.get("score_confidence_floor_focused", cfg.score_confidence_floor_focused))),
+        )
+        cfg.score_confidence_floor_uncertain = max(
+            0.05,
+            min(0.9, float(self.config.get("score_confidence_floor_uncertain", cfg.score_confidence_floor_uncertain))),
+        )
+        cfg.score_recover_rate_focused_stable = max(
+            0.5,
+            float(self.config.get("score_recover_rate_focused_stable", cfg.score_recover_rate_focused_stable)),
+        )
+        cfg.score_recover_rate_focused_unstable = max(
+            0.2,
+            float(self.config.get("score_recover_rate_focused_unstable", cfg.score_recover_rate_focused_unstable)),
+        )
+        cfg.score_drop_rate_distraction_strong = max(
+            0.5,
+            float(self.config.get("score_drop_rate_distraction_strong", cfg.score_drop_rate_distraction_strong)),
+        )
+        cfg.score_drop_rate_distraction_soft = max(
+            0.2,
+            float(self.config.get("score_drop_rate_distraction_soft", cfg.score_drop_rate_distraction_soft)),
+        )
+        cfg.score_drop_rate_drowsy_strong = max(
+            0.5,
+            float(self.config.get("score_drop_rate_drowsy_strong", cfg.score_drop_rate_drowsy_strong)),
+        )
+        cfg.score_uncertain_soft_penalty = max(
+            0.0,
+            float(self.config.get("score_uncertain_soft_penalty", cfg.score_uncertain_soft_penalty)),
+        )
+        cfg.time_on_task_drift_start_minutes = max(
+            5.0,
+            float(self.config.get("time_on_task_drift_start_minutes", cfg.time_on_task_drift_start_minutes)),
+        )
+        cfg.time_on_task_drift_per_minute = max(
+            0.0,
+            float(self.config.get("time_on_task_drift_per_minute", cfg.time_on_task_drift_per_minute)),
+        )
+        cfg.break_recovery_boost_window_seconds = max(
+            0.0,
+            float(self.config.get("break_recovery_boost_window_seconds", cfg.break_recovery_boost_window_seconds)),
+        )
+        cfg.refocus_validation_seconds = max(
+            0.5,
+            float(self.config.get("refocus_validation_seconds", cfg.refocus_validation_seconds)),
+        )
+        cfg.refocus_confidence_min = max(
+            0.2,
+            min(0.95, float(self.config.get("refocus_confidence_min", cfg.refocus_confidence_min))),
+        )
+        cfg.refocus_face_ratio_min = max(
+            0.2,
+            min(0.95, float(self.config.get("refocus_face_ratio_min", cfg.refocus_face_ratio_min))),
+        )
+        cfg.refocus_recover_rate_locked = max(
+            0.05,
+            float(self.config.get("refocus_recover_rate_locked", cfg.refocus_recover_rate_locked)),
+        )
+        cfg.refocus_recover_ramp_seconds = max(
+            0.2,
+            float(self.config.get("refocus_recover_ramp_seconds", cfg.refocus_recover_ramp_seconds)),
+        )
+
+        self.engine.capture_base_config()
+
+    def _focus_engine_defaults(self) -> Dict[str, Any]:
+        """Export current global engine defaults before user personalization is applied."""
+        cfg = self.engine.config
+        estimated_ear_threshold = max(0.16, min(0.32, cfg.drowsy_ear_threshold / 0.82))
+        return {
+            "ear_threshold": estimated_ear_threshold,
+            "drowsy_ear_threshold": float(cfg.drowsy_ear_threshold),
+            "drowsy_closure_ratio": float(cfg.drowsy_closure_ratio),
+            "perclos_threshold": float(cfg.perclos_threshold),
+            "blink_rate_low_screen_max": float(cfg.blink_rate_low_screen_max),
+            "blink_rate_high_fatigue_min": float(cfg.blink_rate_high_fatigue_min),
+            "fatigue_head_down_min_duration": float(cfg.fatigue_head_down_min_duration),
+            "phone_eye_down_min_duration": float(cfg.phone_eye_down_min_duration),
+            "score_drop_rate": float(cfg.score_drop_rate),
+            "score_recover_rate": float(cfg.score_recover_rate),
+            "score_noise_softening_seconds": float(cfg.score_noise_softening_seconds),
+            "score_confidence_floor_focused": float(cfg.score_confidence_floor_focused),
+            "score_confidence_floor_uncertain": float(cfg.score_confidence_floor_uncertain),
+            "score_recover_rate_focused_stable": float(cfg.score_recover_rate_focused_stable),
+            "score_recover_rate_focused_unstable": float(cfg.score_recover_rate_focused_unstable),
+            "score_drop_rate_distraction_strong": float(cfg.score_drop_rate_distraction_strong),
+            "score_drop_rate_distraction_soft": float(cfg.score_drop_rate_distraction_soft),
+            "score_drop_rate_drowsy_strong": float(cfg.score_drop_rate_drowsy_strong),
+            "score_uncertain_soft_penalty": float(cfg.score_uncertain_soft_penalty),
+            "time_on_task_drift_start_minutes": float(cfg.time_on_task_drift_start_minutes),
+            "time_on_task_drift_per_minute": float(cfg.time_on_task_drift_per_minute),
+            "break_recovery_boost_window_seconds": float(cfg.break_recovery_boost_window_seconds),
+            "score_target_uncertain": float(cfg.score_target_uncertain),
+            "refocus_validation_seconds": float(cfg.refocus_validation_seconds),
+            "focused_state_hold_seconds": float(cfg.focused_state_hold_seconds),
+            "uncertain_short_soft_seconds": float(cfg.uncertain_short_soft_seconds),
+            "uncertain_behavior_window_seconds": float(cfg.uncertain_behavior_window_seconds),
+        }
+
+    def _apply_personalized_vision_thresholds(self, threshold_payload: Dict[str, Any]) -> None:
+        """Apply blink EAR threshold to vision pipeline when personalization is available."""
+        if not isinstance(threshold_payload, dict):
+            return
+
+        if self.vision_pipeline is None:
+            return
+
+        ear_threshold = threshold_payload.get("ear_threshold")
+        if ear_threshold is None:
+            return
+
+        try:
+            threshold_value = max(0.12, min(0.35, float(ear_threshold)))
+        except (TypeError, ValueError):
+            return
+
+        if hasattr(self.vision_pipeline, "set_blink_threshold"):
+            self.vision_pipeline.set_blink_threshold(threshold_value)
+        else:
+            self.vision_pipeline._blink_threshold = threshold_value
 
     def _init_ui(self):
         """Initialize user interface."""
         self.setWindowTitle("FocusGuardian")
         self.setMinimumSize(1060, 680)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
 
         # Central widget
         central = QWidget()
+        central.setObjectName("appRoot")
         self.setCentralWidget(central)
 
-        # Main layout
-        main_layout = QHBoxLayout(central)
+        root_layout = QVBoxLayout(central)
+        root_layout.setSpacing(10)
+        root_layout.setContentsMargins(10, 10, 10, 10)
+
+        self.title_bar = TitleBarWidget()
+        self.title_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        root_layout.addWidget(self.title_bar, 0, Qt.AlignmentFlag.AlignTop)
+
+        content_host = QWidget()
+        content_host.setObjectName("mainContentHost")
+
+        # Main content layout
+        main_layout = QHBoxLayout(content_host)
         main_layout.setSpacing(18)
-        main_layout.setContentsMargins(18, 18, 18, 18)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.addWidget(content_host, 1)
+
+        self._root_layout = root_layout
 
         # Left column (65%): header, camera panel, live strip, actions
         left_column = QWidget()
@@ -1136,23 +1588,14 @@ class MainWindow(QMainWindow):
         header_row = QHBoxLayout()
         header_row.setContentsMargins(0, 0, 0, 0)
         header_row.setSpacing(14)
+        header_row.addStretch(1)
 
-        title_block = QVBoxLayout()
-        title_block.setContentsMargins(0, 0, 0, 0)
-        title_block.setSpacing(4)
-
-        hero_title = QLabel("Theo dõi tập trung")
-        hero_title.setObjectName("heroTitle")
-        title_block.addWidget(hero_title)
-
-        hero_subtitle = QLabel(
-            "Giám sát trạng thái chú ý theo thời gian thực và đề xuất nghỉ hợp lý"
-        )
-        hero_subtitle.setObjectName("heroSubtitle")
-        hero_subtitle.setWordWrap(True)
-        title_block.addWidget(hero_subtitle)
-
-        header_row.addLayout(title_block, 1)
+        self.btn_logout = QPushButton("Đăng xuất")
+        self.btn_logout.setObjectName("secondaryButton")
+        self.btn_logout.setFixedHeight(38)
+        self.btn_logout.setMinimumWidth(96)
+        self.btn_logout.clicked.connect(self._request_logout)
+        header_row.addWidget(self.btn_logout, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
 
         self.btn_settings = QPushButton()
         self.btn_settings.setObjectName("iconButton")
@@ -1300,17 +1743,29 @@ class MainWindow(QMainWindow):
         self._update_live_status(face_detected=None, lighting="Unknown")
         self._refresh_focus_guidance()
         self._sync_responsive_layout()
+        self._sync_title_bar_state()
 
     def _apply_theme(self):
-        self.config["theme_mode"] = "dark"
-        self.setStyleSheet(get_stylesheet(True))
+        theme_mode = str(self.config.get("theme_mode", "light")).strip().lower()
+        is_dark = theme_mode != "light"
+        self.setStyleSheet(get_stylesheet(is_dark))
+        if hasattr(self, "title_bar"):
+            self.title_bar.set_title(self.windowTitle())
+            self.title_bar.sync_window_state()
         self._set_settings_button_icon()
-        self.score_widget.update_theme(True)
-        self.stats_widget.apply_theme(True)
+        if hasattr(self, "live_status_strip"):
+            self.live_status_strip.update_theme(is_dark)
+        if hasattr(self, "guidance_widget"):
+            self.guidance_widget.update_theme(is_dark)
+        self.score_widget.update_theme(is_dark)
+        self.stats_widget.apply_theme(is_dark)
+        if hasattr(self, "trend_widget") and hasattr(self.trend_widget, "sparkline"):
+            self.trend_widget.sparkline.update_theme(is_dark)
         if hasattr(self, "state_badge") and hasattr(self, "state_hint"):
             self._update_state_badge(self.current_state, 0.0, self.state_hint.text())
         if hasattr(self, "guidance_widget"):
             self._refresh_focus_guidance()
+        self._sync_title_bar_state()
 
     def _set_settings_button_icon(self) -> None:
         """Set a clear settings icon with a cross-platform fallback."""
@@ -1340,22 +1795,144 @@ class MainWindow(QMainWindow):
 
     def _get_profile_name(self) -> str:
         """Return active profile name from config."""
-        profile_name = str(self.config.get("profile_name", "default")).strip()
-        return profile_name or "default"
+        fallback = str(self.config.get("profile_name", "default")).strip() or "default"
+        return self.auth_manager.get_effective_profile_name(fallback)
+
+    def _profile_scoped_settings_payload(self) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
+        for key in PROFILE_SCOPED_CONFIG_KEYS:
+            if key in self.config:
+                payload[key] = self.config.get(key)
+        return payload
+
+    def _reset_profile_scoped_settings_to_defaults(self) -> None:
+        if not bool(self.config.get("enable_google_sheets_sync", False)):
+            return
+
+        for key in PROFILE_SCOPED_CONFIG_KEYS:
+            if key in PROFILE_SCOPED_DEFAULT_SETTINGS:
+                self.config[key] = PROFILE_SCOPED_DEFAULT_SETTINGS[key]
+
+    def _load_profile_scoped_settings_from_google(self, *, seed_if_missing: bool = False) -> None:
+        if not bool(self.config.get("enable_google_sheets_sync", False)):
+            return
+
+        profile_name = str(self.profile_name or self._get_profile_name()).strip() or "default"
+        loaded = self.analytics_store.google_sync.load_profile_settings(profile_name)
+        if loaded is None:
+            return
+
+        if loaded:
+            self.config.update(loaded)
+            logger.info(
+                "Loaded %s profile-scoped settings from Google Sheets for profile '%s'",
+                len(loaded),
+                profile_name,
+            )
+            return
+
+        if seed_if_missing:
+            payload = self._profile_scoped_settings_payload()
+            seeded = self.analytics_store.google_sync.upsert_profile_settings(profile_name, payload)
+            if seeded:
+                logger.info("Seeded profile-scoped settings to Google Sheets for profile '%s'", profile_name)
+
+    def _sync_profile_scoped_settings_to_google(self) -> None:
+        if not bool(self.config.get("enable_google_sheets_sync", False)):
+            return
+
+        profile_name = str(self.profile_name or self._get_profile_name()).strip() or "default"
+        self.config["profile_name"] = profile_name
+        payload = self._profile_scoped_settings_payload()
+        synced = self.analytics_store.google_sync.upsert_profile_settings(profile_name, payload)
+        if not synced:
+            logger.debug(
+                "Skipped syncing profile-scoped settings for profile '%s' (Google Sheets unavailable)",
+                profile_name,
+            )
 
     def _reset_session_tracking(self) -> None:
         """Reset counters at the beginning of a tracking session."""
         self.session_time_seconds = 0
         self.focus_time = 0.0
+        self.raw_focus_time = 0.0
         self.distraction_count = 0
         self.break_count = 0
         self.score_samples = []
+        self.raw_score_samples = []
         self.focus_trend_samples = []
         self.current_state = FocusState.UNCERTAIN
+        self.display_state = FocusState.UNCERTAIN
+        self._display_focused_state = None
+        self._display_hold_until = 0.0
         self.current_score = 100.0
         self._display_score = 100.0
         self.continuous_focus_time = 0.0
         self.state_time_by_state = {state.name: 0.0 for state in FocusState}
+        self.raw_state_time_by_state = {state.name: 0.0 for state in FocusState}
+
+        self._session_eye_metric_frames = 0
+        self._session_blink_count = 0
+        self._session_eye_closed_frames = 0
+        self._session_perclos_frames = 0
+        self._session_ear_sum = 0.0
+        self._session_ear_samples = 0
+        self._session_focus_score_start: Optional[float] = None
+        self._session_focus_score_end: Optional[float] = None
+        self._session_fatigue_onset_seconds: Optional[float] = None
+        self._session_total_frames = 0
+        self._session_face_detected_frames = 0
+        self._session_uncertain_noise_seconds = 0.0
+        self._session_uncertain_behavioral_seconds = 0.0
+        self._session_uncertain_clean_candidate_seconds = 0.0
+        self._session_state_segments: list[Dict[str, Any]] = []
+        self._session_eye_metric_seconds = 0.0
+        self._last_state_frame_timestamp = None
+        self.zalo_alert_manager.reset_session()
+
+    def _compute_frame_elapsed_seconds(self, frame_timestamp: float) -> float:
+        """Return elapsed real-time seconds between processed frames."""
+        fallback_dt = max(1.0 / 120.0, float(self.frame_interval) / 1000.0)
+        last_ts = self._last_state_frame_timestamp
+        self._last_state_frame_timestamp = frame_timestamp
+
+        if last_ts is None:
+            return fallback_dt
+
+        dt = frame_timestamp - last_ts
+        if dt <= 0.0:
+            return fallback_dt
+
+        # Clamp spikes from occasional pipeline stalls.
+        return max(1.0 / 120.0, min(0.5, dt))
+
+    def _track_session_eye_metrics(self, features: FrameFeatures, elapsed_seconds: float) -> None:
+        """Accumulate blink/closure/EAR metrics for per-session personalization."""
+        if self._is_initial_analysis_phase():
+            return
+
+        if not features.face_detected:
+            return
+
+        if features.ear_avg is None and features.eye_closure_level is None:
+            return
+
+        self._session_eye_metric_frames += 1
+        self._session_eye_metric_seconds += max(0.0, float(elapsed_seconds))
+
+        if features.blink_detected:
+            self._session_blink_count += 1
+        if features.is_eye_closed:
+            self._session_eye_closed_frames += 1
+
+        if features.ear_avg is not None:
+            ear_value = float(features.ear_avg)
+            self._session_ear_sum += ear_value
+            self._session_ear_samples += 1
+            if ear_value <= self.engine.config.drowsy_ear_threshold:
+                self._session_perclos_frames += 1
+        elif features.eye_closure_level is not None and float(features.eye_closure_level) >= 0.8:
+            self._session_perclos_frames += 1
 
     def _is_initial_analysis_phase(self) -> bool:
         """Return True while the startup calibration window is still active."""
@@ -1397,34 +1974,85 @@ class MainWindow(QMainWindow):
     def _apply_personalized_schedule(self) -> None:
         """Load and optionally apply personalized work/break timing for the active profile."""
         self.profile_name = self._get_profile_name()
-
-        if not self.config.get("enable_personalization", True):
-            return
+        self.engine.set_profile(self.profile_name)
+        self.config["enable_personalization"] = True
+        self.config["auto_apply_personalization"] = True
 
         try:
-            recommendation = self.analytics_store.get_recommendation(
+            minutes_since_last_break = max(0.0, (time.time() - self.last_break_time) / 60.0)
+            bundle = self.analytics_store.get_personalization_bundle(
                 self.profile_name,
                 default_work=int(self.config.get("break_interval_minutes", 25)),
                 default_break=int(self.config.get("break_duration_minutes", 5)),
+                minutes_since_last_break=minutes_since_last_break,
+                focus_engine_defaults=self._focus_engine_defaults(),
             )
         except Exception as exc:
             logger.warning("Failed to load personalized schedule: %s", exc)
             return
 
-        self._last_recommendation = recommendation
+        recommendation = bundle.get("recommendation", {})
+        baseline_payload = bundle.get("baseline", {}) or {}
+        threshold_payload = bundle.get("thresholds", {}) or {}
 
-        if self.config.get("auto_apply_personalization", True):
-            self.config["break_interval_minutes"] = int(recommendation.get("work_minutes", 25))
-            self.config["break_duration_minutes"] = int(recommendation.get("break_minutes", 5))
-            self.config_changed.emit(self.config.copy())
+        self._last_recommendation = recommendation
+        self.config["break_interval_minutes"] = int(recommendation.get("work_minutes", 25))
+        self.config["break_duration_minutes"] = int(recommendation.get("break_minutes", 5))
+        self.config_changed.emit(self.config.copy())
+
+        self.engine.set_personalized_thresholds(
+            personalized_thresholds=threshold_payload,
+            profile_name=self.profile_name,
+            user_baseline=baseline_payload,
+            session_context={
+                "minutes_since_last_break": minutes_since_last_break,
+                "is_tracking": bool(self.camera_running),
+            },
+        )
+        self._apply_personalized_vision_thresholds(threshold_payload)
 
         logger.info(
-            "Personalized plan for profile '%s': work=%s min, break=%s min (%s)",
+            "Personalized plan for profile '%s': work=%s min, break=%s min (%s, stage=%s)",
             self.profile_name,
             recommendation.get("work_minutes", 25),
             recommendation.get("break_minutes", 5),
             recommendation.get("reason", "n/a"),
+            recommendation.get("adaptation_stage", "cold_start"),
         )
+
+    def _current_schedule_minutes(self) -> tuple[int, int]:
+        """Return current active work/break minutes with recommendation priority."""
+        default_work = int(self.config.get("break_interval_minutes", 25))
+        default_break = int(self.config.get("break_duration_minutes", 5))
+
+        work_raw = self._last_recommendation.get("work_minutes", default_work)
+        break_raw = self._last_recommendation.get("break_minutes", default_break)
+
+        try:
+            work_minutes = int(float(work_raw))
+        except (TypeError, ValueError):
+            work_minutes = int(default_work)
+
+        try:
+            break_minutes = int(float(break_raw))
+        except (TypeError, ValueError):
+            break_minutes = int(default_break)
+
+        work_minutes = max(15, min(60, work_minutes))
+        break_minutes = max(3, min(20, break_minutes))
+
+        changed = False
+        if int(self.config.get("break_interval_minutes", default_work)) != work_minutes:
+            self.config["break_interval_minutes"] = work_minutes
+            changed = True
+        if int(self.config.get("break_duration_minutes", default_break)) != break_minutes:
+            self.config["break_duration_minutes"] = break_minutes
+            changed = True
+
+        if changed:
+            self.config_changed.emit(self.config.copy())
+
+        return work_minutes, break_minutes
 
     def _persist_session_analytics(self) -> None:
         """Persist current session data for later analysis and personalization."""
@@ -1441,45 +2069,119 @@ class MainWindow(QMainWindow):
         if session_seconds < 30:
             return
 
-        avg_score = float(sum(self.score_samples) / len(self.score_samples)) if self.score_samples else float(self.current_score)
+        avg_score_raw = (
+            float(sum(self.raw_score_samples) / len(self.raw_score_samples))
+            if self.raw_score_samples
+            else float(self.current_score)
+        )
+        avg_score_display = (
+            float(sum(self.score_samples) / len(self.score_samples))
+            if self.score_samples
+            else float(self.current_score)
+        )
+
+        eye_metric_frames = max(0, int(getattr(self, "_session_eye_metric_frames", 0)))
+        eye_metric_seconds = max(0.0, float(getattr(self, "_session_eye_metric_seconds", 0.0) or 0.0))
+        if eye_metric_seconds <= 0.0 and eye_metric_frames > 0:
+            eye_metric_seconds = eye_metric_frames * max(0.001, float(self.frame_interval) / 1000.0)
+        blink_rate_per_min = (
+            (float(getattr(self, "_session_blink_count", 0)) * 60.0) / max(eye_metric_seconds, 1e-6)
+            if eye_metric_frames > 0
+            else 0.0
+        )
+        eye_closure_ratio = (
+            float(getattr(self, "_session_eye_closed_frames", 0)) / eye_metric_frames
+            if eye_metric_frames > 0
+            else 0.0
+        )
+        perclos = (
+            float(getattr(self, "_session_perclos_frames", 0)) / eye_metric_frames
+            if eye_metric_frames > 0
+            else 0.0
+        )
+        avg_ear = (
+            float(getattr(self, "_session_ear_sum", 0.0)) / max(1, int(getattr(self, "_session_ear_samples", 0)))
+            if int(getattr(self, "_session_ear_samples", 0)) > 0
+            else 0.0
+        )
+
+        focus_score_start = self._session_focus_score_start if self._session_focus_score_start is not None else avg_score_raw
+        focus_score_end = self._session_focus_score_end if self._session_focus_score_end is not None else avg_score_raw
+        score_drop_per_hour = (
+            ((float(focus_score_start) - float(focus_score_end)) / max(session_seconds / 3600.0, 1e-6))
+            if session_seconds > 0
+            else 0.0
+        )
+
+        minutes_since_last_break = max(0.0, (time.time() - self.last_break_time) / 60.0)
+        fatigue_onset_minutes = (
+            (self._session_fatigue_onset_seconds / 60.0)
+            if self._session_fatigue_onset_seconds is not None
+            else None
+        )
+
+        face_presence_ratio = (
+            float(getattr(self, "_session_face_detected_frames", 0))
+            / max(1.0, float(getattr(self, "_session_total_frames", 0)))
+        )
+
+        raw_state_seconds = self.raw_state_time_by_state.copy()
+        display_state_seconds = self.state_time_by_state.copy()
+        active_work_minutes, active_break_minutes = self._current_schedule_minutes()
+
         session_record = {
             "timestamp": int(time.time()),
             "profile_name": self.profile_name,
             "session_seconds": session_seconds,
-            "focus_seconds": float(self.focus_time),
+            "focus_seconds": float(self.raw_focus_time),
+            "focus_seconds_display": float(self.focus_time),
             "distraction_count": int(self.distraction_count),
             "break_count": int(self.break_count),
-            "avg_score": avg_score,
-            "min_score": float(min(self.score_samples)) if self.score_samples else float(self.current_score),
-            "max_score": float(max(self.score_samples)) if self.score_samples else float(self.current_score),
-            "state_seconds": self.state_time_by_state.copy(),
-            "work_interval_minutes_used": int(self.config.get("break_interval_minutes", 25)),
-            "break_duration_minutes_used": int(self.config.get("break_duration_minutes", 5)),
+            "avg_score": avg_score_raw,
+            "avg_score_display": avg_score_display,
+            "min_score": float(min(self.raw_score_samples)) if self.raw_score_samples else float(self.current_score),
+            "max_score": float(max(self.raw_score_samples)) if self.raw_score_samples else float(self.current_score),
+            "focus_score_start": float(focus_score_start),
+            "focus_score_end": float(focus_score_end),
+            "score_drop_per_hour": float(score_drop_per_hour),
+            "blink_rate_per_min": float(blink_rate_per_min),
+            "avg_ear": float(avg_ear),
+            "eye_closure_ratio": float(eye_closure_ratio),
+            "perclos": float(perclos),
+            "fatigue_onset_minutes": float(fatigue_onset_minutes) if fatigue_onset_minutes is not None else None,
+            "minutes_since_last_break": float(minutes_since_last_break),
+            "state_seconds": raw_state_seconds,
+            "state_seconds_display": display_state_seconds,
+            "state_segments": list(getattr(self, "_session_state_segments", [])),
+            "uncertain_measurement_noise_seconds": float(getattr(self, "_session_uncertain_noise_seconds", 0.0)),
+            "uncertain_behavioral_seconds": float(getattr(self, "_session_uncertain_behavioral_seconds", 0.0)),
+            "uncertain_clean_candidate_seconds": float(getattr(self, "_session_uncertain_clean_candidate_seconds", 0.0)),
+            "face_presence_ratio": float(face_presence_ratio),
+            "work_interval_minutes_used": int(active_work_minutes),
+            "break_duration_minutes_used": int(active_break_minutes),
         }
 
         try:
             recommendation = self.analytics_store.record_session(
                 self.profile_name,
                 session_record,
-                default_work=int(self.config.get("break_interval_minutes", 25)),
-                default_break=int(self.config.get("break_duration_minutes", 5)),
+                default_work=int(active_work_minutes),
+                default_break=int(active_break_minutes),
             )
         except Exception as exc:
             logger.warning("Failed to persist session analytics: %s", exc)
             return
 
         self._last_recommendation = recommendation
-
-        if self.config.get("enable_personalization", True) and self.config.get("auto_apply_personalization", True):
-            self.config["break_interval_minutes"] = int(recommendation.get("work_minutes", 25))
-            self.config["break_duration_minutes"] = int(recommendation.get("break_minutes", 5))
-            self.config_changed.emit(self.config.copy())
+        self.config["break_interval_minutes"] = int(recommendation.get("work_minutes", 25))
+        self.config["break_duration_minutes"] = int(recommendation.get("break_minutes", 5))
+        self.config_changed.emit(self.config.copy())
 
         logger.info(
             "Saved session analytics for '%s': duration=%ss, avg_score=%.1f, rec=%s/%s min",
             self.profile_name,
             session_seconds,
-            avg_score,
+            avg_score_raw,
             recommendation.get("work_minutes", 25),
             recommendation.get("break_minutes", 5),
         )
@@ -1495,21 +2197,35 @@ class MainWindow(QMainWindow):
     def _start_tracking(self):
         """Start camera and focus tracking."""
         if not self.vision_available:
-            QMessageBox.warning(
+            py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+            py_exec = sys.executable
+            project_python = Path(__file__).resolve().parents[2] / ".venv" / "Scripts" / "python.exe"
+            run_hint = (
+                f"\nGợi ý chạy đúng môi trường:\n{project_python} main.py"
+                if project_python.exists()
+                else ""
+            )
+            reason_text = f"\nChi tiết lỗi: {self._vision_init_error}" if self._vision_init_error else ""
+            NoticeDialog.warning(
                 self,
                 "Vision không khả dụng",
-                "Các module vision không được cài đặt đúng.\n"
-                "Vui lòng sử dụng Python 3.10 hoặc 3.11 để chạy đầy đủ tính năng."
+                "Không thể khởi tạo vision pipeline trong môi trường hiện tại.\n"
+                f"Python: {py_ver}\n"
+                f"Interpreter: {py_exec}"
+                f"{reason_text}"
+                f"{run_hint}",
+                config=self.config,
             )
             self.btn_start.setChecked(False)
             return
 
         try:
             if not self.camera.start():
-                QMessageBox.warning(
+                NoticeDialog.warning(
                     self,
                     "Lỗi Camera",
-                    "Không thể khởi động camera. Vui lòng kiểm tra kết nối."
+                    "Không thể khởi động camera. Vui lòng kiểm tra kết nối.",
+                    config=self.config,
                 )
                 self.btn_start.setChecked(False)
                 return
@@ -1525,6 +2241,7 @@ class MainWindow(QMainWindow):
             self.stats_timer.start(1000)  # Restart stats timer
             self.btn_start.setText("Dừng")
             self.engine.reset()
+            self.display_state = FocusState.UNCERTAIN
             self.score_widget.set_score(100.0, FocusState.UNCERTAIN)
             self._update_state_badge(FocusState.UNCERTAIN, 0.0, "Đang theo dõi phiên học...")
             self._update_live_status(face_detected=None, lighting="Calibrating")
@@ -1534,7 +2251,12 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             logger.error(f"Failed to start tracking: {e}")
-            QMessageBox.critical(self, "Lỗi", f"Không thể bắt đầu: {e}")
+            NoticeDialog.error(
+                self,
+                "Lỗi",
+                f"Không thể bắt đầu: {e}",
+                config=self.config,
+            )
             self.btn_start.setChecked(False)
             self._update_live_status(face_detected=False, lighting="Unknown")
 
@@ -1548,6 +2270,7 @@ class MainWindow(QMainWindow):
         self.camera_running = False
         self._analysis_started_at = 0.0
         self._display_score = 100.0
+        self.display_state = FocusState.UNCERTAIN
         self.btn_start.setText("Bắt đầu")
         self.camera_widget.update_frame(None)
         self._update_state_badge(FocusState.UNCERTAIN, 0.0, "Đã dừng theo dõi.\nNhấn Bắt đầu để chạy lại.")
@@ -1572,6 +2295,7 @@ class MainWindow(QMainWindow):
 
         timestamp = time.time()
         timestamp_ms = int(timestamp * 1000)
+        elapsed_seconds = self._compute_frame_elapsed_seconds(timestamp)
 
         try:
             # Process through unified vision pipeline
@@ -1579,10 +2303,14 @@ class MainWindow(QMainWindow):
 
             # Extract features from vision result
             face_detected = vision_result.face_detected
+            self._session_total_frames += 1
+            if face_detected:
+                self._session_face_detected_frames += 1
 
             head_pitch, head_yaw, head_roll = None, None, None
             ear_avg, is_eye_closed, blink_detected = None, False, False
             eye_look_down, eye_look_up = None, None
+            eye_closure_level = None
             hand_present, hand_write_score, hand_region = False, 0.0, "none"
 
             if vision_result.head_pose:
@@ -1596,6 +2324,10 @@ class MainWindow(QMainWindow):
                 blink_detected = vision_result.eye_metrics.blink_detected
                 eye_look_down = vision_result.eye_metrics.look_down
                 eye_look_up = vision_result.eye_metrics.look_up
+                eye_closure_level = (
+                    (float(vision_result.eye_metrics.left_closure) + float(vision_result.eye_metrics.right_closure))
+                    / 2.0
+                )
 
             if vision_result.hand_metrics:
                 hand_present = vision_result.hand_metrics.detected
@@ -1629,31 +2361,37 @@ class MainWindow(QMainWindow):
                 idle_seconds=idle_seconds,
                 eye_look_down=eye_look_down,
                 eye_look_up=eye_look_up,
+                eye_closure_level=eye_closure_level,
             )
+
+            self._track_session_eye_metrics(features, elapsed_seconds)
 
             # Process through engine
             state = self.engine.process_frame(features)
             score = self.engine.focus_score
             state_info = self.engine.get_state_info()
-            state_confidence = float(state_info.get("confidence", 0.0))
-            state_reason = str(state_info.get("reason", ""))
-
             # Update UI
-            self._update_state(state, score, state_confidence, state_reason)
+            display_state, display_confidence, display_reason = self._update_state(
+                state,
+                score,
+                state_info,
+                frame_timestamp=timestamp,
+                elapsed_seconds=elapsed_seconds,
+            )
 
             # Draw overlays on frame
             display_frame = self._draw_overlays(
                 frame,
                 features,
-                state,
-                state_confidence,
-                state_reason,
+                display_state,
+                display_confidence,
+                display_reason,
             )
             self.camera_widget.update_frame(display_frame)
             self._update_live_status(face_detected=face_detected, lighting=lighting_quality)
 
             # Check for break suggestion
-            self._check_break_suggestion(state)
+            self._check_break_suggestion(display_state)
 
         except Exception as e:
             logger.error(f"Frame processing error: {e}")
@@ -1682,7 +2420,8 @@ class MainWindow(QMainWindow):
         cv2.rectangle(display, (0, 0), (display.shape[1]-1, display.shape[0]-1),
                       (b, g, r), 2)
 
-        break_interval_seconds = max(60, int(float(self.config.get("break_interval_minutes", 25)) * 60))
+        work_minutes, _ = self._current_schedule_minutes()
+        break_interval_seconds = max(60, int(float(work_minutes) * 60))
         cycle_percent = int(min(100.0, (self.continuous_focus_time / break_interval_seconds) * 100.0))
 
         if self._is_distraction_state(state):
@@ -1747,35 +2486,62 @@ class MainWindow(QMainWindow):
         """Update score status chip and short insight text."""
         trend_delta = self._compute_focus_trend_delta()
         score_now = float(self.current_score)
+        is_dark = str(self.config.get("theme_mode", "light")).strip().lower() != "light"
+
+        if is_dark:
+            palette = {
+                "warmup": ("rgba(127, 147, 170, 0.16)", "#d9e5f5", "rgba(127, 147, 170, 0.28)"),
+                "hold": ("rgba(158, 209, 255, 0.16)", "#d7edff", "rgba(158, 209, 255, 0.30)"),
+                "idle": ("rgba(127, 147, 170, 0.16)", "#d9e5f5", "rgba(127, 147, 170, 0.28)"),
+                "break": ("rgba(239, 157, 149, 0.18)", "#ffd6d0", "rgba(239, 157, 149, 0.30)"),
+                "watch": ("rgba(239, 189, 120, 0.18)", "#ffe3b5", "rgba(239, 189, 120, 0.30)"),
+                "good": ("rgba(89, 213, 192, 0.18)", "#c6f8ee", "rgba(89, 213, 192, 0.30)"),
+            }
+        else:
+            palette = {
+                "warmup": ("rgba(103, 127, 154, 0.14)", "#2f4a64", "rgba(103, 127, 154, 0.30)"),
+                "hold": ("rgba(98, 161, 214, 0.14)", "#1e5b84", "rgba(98, 161, 214, 0.30)"),
+                "idle": ("rgba(103, 127, 154, 0.14)", "#2f4a64", "rgba(103, 127, 154, 0.30)"),
+                "break": ("rgba(214, 103, 91, 0.16)", "#8f3b32", "rgba(214, 103, 91, 0.32)"),
+                "watch": ("rgba(201, 144, 63, 0.16)", "#7a5520", "rgba(201, 144, 63, 0.32)"),
+                "good": ("rgba(41, 151, 136, 0.16)", "#1d6c60", "rgba(41, 151, 136, 0.32)"),
+            }
 
         if self._is_initial_analysis_phase():
             chip_text = "Đang hiệu chỉnh"
-            chip_style = "background:rgba(127, 147, 170, 0.16); color:#d9e5f5; border:1px solid rgba(127, 147, 170, 0.28);"
+            chip_bg, chip_fg, chip_border = palette["warmup"]
             seconds_left = self._analysis_seconds_left()
             hint_text = f"Giữ điểm ổn định trong {seconds_left}s để hệ thống lấy baseline ban đầu."
+        elif (
+            "đang giữ trạng thái ổn định" in reason.lower()
+            or "tín hiệu tạm thời chưa rõ" in reason.lower()
+        ):
+            chip_text = "Giữ ổn định"
+            chip_bg, chip_fg, chip_border = palette["hold"]
+            hint_text = "Tín hiệu tạm thời chưa rõ, hệ thống đang giữ trạng thái ổn định để tránh nhảy sai."
         elif not self.camera_running or (state == FocusState.UNCERTAIN and len(self.focus_trend_samples) < 10):
             chip_text = "Chưa phân tích"
-            chip_style = "background:rgba(127, 147, 170, 0.16); color:#d9e5f5; border:1px solid rgba(127, 147, 170, 0.28);"
+            chip_bg, chip_fg, chip_border = palette["idle"]
             hint_text = "Đang thu thập dữ liệu để đánh giá xu hướng tập trung."
         elif self._is_distraction_state(state) or score_now < 58:
             chip_text = "Cần nghỉ"
-            chip_style = "background:rgba(239, 157, 149, 0.18); color:#ffd6d0; border:1px solid rgba(239, 157, 149, 0.30);"
+            chip_bg, chip_fg, chip_border = palette["break"]
             hint_text = "Dấu hiệu quá tải chú ý. Nên nghỉ ngắn 2-3 phút để hồi phục."
         elif trend_delta <= -3.5 or score_now < 76:
             chip_text = "Mất tập trung nhẹ"
-            chip_style = "background:rgba(239, 189, 120, 0.18); color:#ffe3b5; border:1px solid rgba(239, 189, 120, 0.30);"
+            chip_bg, chip_fg, chip_border = palette["watch"]
             delta_points = max(1, int(abs(trend_delta)))
             hint_text = f"Giảm {delta_points} điểm so với xu hướng gần nhất."
         else:
             chip_text = "Ổn định"
-            chip_style = "background:rgba(89, 213, 192, 0.18); color:#c6f8ee; border:1px solid rgba(89, 213, 192, 0.30);"
+            chip_bg, chip_fg, chip_border = palette["good"]
             stable_minutes = max(1, int(self.continuous_focus_time // 60))
             hint_text = f"Ổn định trong {stable_minutes} phút gần đây."
 
         self.state_badge.setText(chip_text)
         self.state_badge.setStyleSheet(
             "border-radius: 999px; padding: 5px 12px; font-weight: 650;"
-            + chip_style
+            f"background:{chip_bg}; color:{chip_fg}; border:1px solid {chip_border};"
         )
 
         state_name = STATE_NAMES.get(state, state.name)
@@ -1797,15 +2563,91 @@ class MainWindow(QMainWindow):
             opacity = 1.0
         self._state_hint_opacity.setOpacity(opacity)
 
-    def _update_state(self, state: FocusState, score: float,
-                      state_confidence: float = 0.0,
-                      state_reason: str = ""):
-        """Update UI with new state and score."""
+    def _append_session_state_segment(
+        self,
+        state: FocusState,
+        seconds: float,
+        uncertain_reason_type: str = "",
+    ) -> None:
+        """Append compact contiguous state segments for analytics cleaning."""
+        if seconds <= 0.0:
+            return
+
+        reason_type = uncertain_reason_type.strip().lower() if state == FocusState.UNCERTAIN else ""
+        if (
+            self._session_state_segments
+            and self._session_state_segments[-1].get("state") == state.name
+            and str(self._session_state_segments[-1].get("uncertain_reason_type", "")).strip().lower() == reason_type
+        ):
+            self._session_state_segments[-1]["seconds"] = (
+                float(self._session_state_segments[-1].get("seconds", 0.0) or 0.0) + seconds
+            )
+            return
+
+        self._session_state_segments.append(
+            {
+                "state": state.name,
+                "seconds": float(seconds),
+                "uncertain_reason_type": reason_type,
+            }
+        )
+
+    def _update_state(
+        self,
+        state: FocusState,
+        score: float,
+        state_info: Dict[str, Any],
+        frame_timestamp: float,
+        elapsed_seconds: float,
+    ) -> tuple[FocusState, float, str]:
+        """Update UI with display-stabilized state while preserving raw analytics signals."""
+        raw_confidence = float(state_info.get("confidence", 0.0) or 0.0)
+        raw_reason = str(state_info.get("reason", "") or "")
+        uncertain_reason_type = str(state_info.get("uncertain_reason_type", "") or "").strip().lower()
+        focused_hold_active = bool(state_info.get("focused_hold_active", False))
+        uncertain_clean_candidate = bool(state_info.get("uncertain_clean_candidate", False))
+        try:
+            uncertain_grace_remaining = max(0.0, float(state_info.get("uncertain_grace_remaining", 0.0) or 0.0))
+        except (TypeError, ValueError):
+            uncertain_grace_remaining = 0.0
+
         in_warmup = self._is_initial_analysis_phase()
+        now_ts = frame_timestamp
+
         effective_state = FocusState.UNCERTAIN if in_warmup else state
         effective_score = self._compute_display_score(score)
-        effective_confidence = 0.0 if in_warmup else state_confidence
-        effective_reason = "Đang hiệu chỉnh dữ liệu ban đầu" if in_warmup else state_reason
+        effective_confidence = 0.0 if in_warmup else raw_confidence
+        effective_reason = "Đang hiệu chỉnh dữ liệu ban đầu" if in_warmup else raw_reason
+
+        if not in_warmup:
+            if state in (FocusState.ON_SCREEN_READING, FocusState.OFFSCREEN_WRITING):
+                self._display_focused_state = state
+                self._display_hold_until = now_ts + self._display_uncertain_hold_seconds
+            elif state in (FocusState.PHONE_DISTRACTION, FocusState.DROWSY_FATIGUE, FocusState.AWAY):
+                self._display_focused_state = None
+                self._display_hold_until = now_ts
+
+            if state == FocusState.UNCERTAIN:
+                keep_focused_display = (
+                    self._display_focused_state is not None
+                    and (
+                        uncertain_reason_type == "measurement_noise"
+                        or uncertain_clean_candidate
+                        or focused_hold_active
+                    )
+                    and (
+                        now_ts <= self._display_hold_until
+                        or uncertain_grace_remaining > 0.0
+                        or focused_hold_active
+                    )
+                )
+
+                if keep_focused_display:
+                    effective_state = self._display_focused_state
+                    effective_confidence = max(0.34, min(0.68, raw_confidence))
+                    effective_reason = "Tín hiệu tạm thời chưa rõ, đang giữ trạng thái ổn định"
+
+        self.display_state = effective_state
 
         # Track state changes
         state_changed = effective_state != self.current_state
@@ -1825,6 +2667,14 @@ class MainWindow(QMainWindow):
             ):
                 self._schedule_distraction_break(effective_state)
 
+            if (
+                not in_warmup
+                and effective_state == FocusState.DROWSY_FATIGUE
+                and self._session_fatigue_onset_seconds is None
+                and self.session_started_at is not None
+            ):
+                self._session_fatigue_onset_seconds = max(0.0, time.time() - self.session_started_at)
+
         self.current_state = effective_state
         self.current_score = effective_score
         self._update_state_badge(effective_state, effective_confidence, effective_reason)
@@ -1834,8 +2684,34 @@ class MainWindow(QMainWindow):
         if not in_warmup:
             self.score_samples.append(effective_score)
 
-        frame_seconds = self.frame_interval / 1000
+        frame_seconds = max(0.0, float(elapsed_seconds))
         if not in_warmup:
+            raw_score_value = max(0.0, min(100.0, float(score)))
+            self.raw_score_samples.append(raw_score_value)
+            if self._session_focus_score_start is None:
+                self._session_focus_score_start = raw_score_value
+            self._session_focus_score_end = raw_score_value
+
+            self.raw_state_time_by_state[state.name] = (
+                self.raw_state_time_by_state.get(state.name, 0.0) + frame_seconds
+            )
+            if state in (FocusState.ON_SCREEN_READING, FocusState.OFFSCREEN_WRITING):
+                self.raw_focus_time += frame_seconds
+
+            if state == FocusState.UNCERTAIN:
+                if uncertain_reason_type == "measurement_noise":
+                    self._session_uncertain_noise_seconds += frame_seconds
+                else:
+                    self._session_uncertain_behavioral_seconds += frame_seconds
+                if uncertain_clean_candidate:
+                    self._session_uncertain_clean_candidate_seconds += frame_seconds
+
+            self._append_session_state_segment(
+                state,
+                frame_seconds,
+                uncertain_reason_type=uncertain_reason_type,
+            )
+
             # Track focus time only after initial calibration.
             self.state_time_by_state[effective_state.name] = (
                 self.state_time_by_state.get(effective_state.name, 0.0) + frame_seconds
@@ -1852,7 +2728,24 @@ class MainWindow(QMainWindow):
         if state_changed:
             self._refresh_focus_guidance()
 
+        if not in_warmup and self.camera_running:
+            alert_event = self.zalo_alert_manager.handle_state_update(
+                effective_state,
+                score=effective_score,
+                confidence=effective_confidence,
+                reason=effective_reason,
+                timestamp=now_ts,
+                recommendation=self._last_recommendation,
+                in_warmup=in_warmup,
+            )
+            if alert_event is not None:
+                if alert_event.success:
+                    logger.info("Sent Zalo state alert: %s", alert_event.alert_key)
+                else:
+                    logger.warning("Zalo state alert skipped/failed: %s", alert_event.detail)
+
         self.score_changed.emit(effective_score)
+        return effective_state, effective_confidence, effective_reason
 
     @staticmethod
     def _is_focused_state(state: FocusState) -> bool:
@@ -1945,15 +2838,17 @@ class MainWindow(QMainWindow):
         self._last_distraction_break_time = time.time()
         self.break_suggested.emit()
 
-        break_minutes = int(self.config.get("break_duration_minutes", 5))
+        _, break_minutes = self._current_schedule_minutes()
         state_name = STATE_NAMES.get(state, state.name)
-        QMessageBox.information(
+        NoticeDialog.info(
             self,
             "Nhắc nghỉ phục hồi tập trung",
             (
                 f"Phát hiện bạn bắt đầu mất tập trung ({state_name}).\n"
                 f"Hãy nghỉ {break_minutes} phút và thực hiện bài phục hồi tập trung."
             ),
+            config=self.config,
+            button_text="Bắt đầu nghỉ",
         )
 
         self._take_break(auto_triggered=True)
@@ -1993,6 +2888,8 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "guidance_widget"):
             return
 
+        is_dark = str(self.config.get("theme_mode", "light")).strip().lower() != "light"
+
         if self.camera_running and self._is_initial_analysis_phase():
             seconds_left = self._analysis_seconds_left()
             self.guidance_widget.set_guidance(
@@ -2004,7 +2901,7 @@ class MainWindow(QMainWindow):
             if hasattr(self, "trend_widget"):
                 self.trend_widget.set_insight(
                     trend_text="Đang hiệu chỉnh",
-                    trend_color="#9fd6ff",
+                    trend_color="#9fd6ff" if is_dark else "#2f587f",
                     cycle_percent=0,
                     trend_values=[],
                 )
@@ -2013,21 +2910,19 @@ class MainWindow(QMainWindow):
         trend_delta = self._compute_focus_trend_delta()
         if trend_delta <= -7:
             trend_text = "Đang giảm rõ"
-            trend_color = "#f6c177"
+            trend_color = "#f6c177" if is_dark else "#8a5d24"
         elif trend_delta <= -3:
             trend_text = "Giảm nhẹ"
-            trend_color = "#ffde95"
+            trend_color = "#ffde95" if is_dark else "#9b6f2d"
         elif trend_delta >= 5:
             trend_text = "Đang phục hồi"
-            trend_color = "#8ff5dd"
+            trend_color = "#8ff5dd" if is_dark else "#0f7466"
         else:
             trend_text = "Ổn định"
-            trend_color = "#9fd6ff"
+            trend_color = "#9fd6ff" if is_dark else "#2f587f"
 
-        break_interval_seconds = max(
-            60,
-            int(float(self.config.get("break_interval_minutes", 25)) * 60),
-        )
+        work_minutes, _ = self._current_schedule_minutes()
+        break_interval_seconds = max(60, int(float(work_minutes) * 60))
         elapsed_since_break = 0.0
         if self.camera_running:
             elapsed_since_break = max(0.0, time.time() - self.last_break_time)
@@ -2076,9 +2971,23 @@ class MainWindow(QMainWindow):
         if not self.config.get("enable_break_reminders", True):
             return
 
-        break_interval = self.config.get("break_interval_minutes", 25) * 60
+        work_minutes, _ = self._current_schedule_minutes()
+        break_interval = int(work_minutes) * 60
+        _ = state
 
         if self.continuous_focus_time >= break_interval:
+            alert_event = self.zalo_alert_manager.handle_break_reminder(
+                focus_cycle_seconds=self.continuous_focus_time,
+                break_interval_seconds=float(break_interval),
+                recommendation=self._last_recommendation,
+                timestamp=time.time(),
+            )
+            if alert_event is not None:
+                if alert_event.success:
+                    logger.info("Sent Zalo break reminder alert")
+                else:
+                    logger.warning("Zalo break reminder skipped/failed: %s", alert_event.detail)
+
             self.break_suggested.emit()
             self.continuous_focus_time = 0
             self.last_break_time = time.time()
@@ -2087,7 +2996,10 @@ class MainWindow(QMainWindow):
     def _update_stats(self):
         """Update statistics display."""
         if self.camera_running:
-            self.session_time_seconds += 1
+            if self.session_started_at is not None:
+                self.session_time_seconds = max(0, int(time.time() - self.session_started_at))
+            else:
+                self.session_time_seconds += 1
             self._record_focus_sample(self.current_score)
 
         avg_score_text = "0"
@@ -2120,6 +3032,7 @@ class MainWindow(QMainWindow):
         self.break_count += 1
         self.last_break_time = time.time()
         self.continuous_focus_time = 0
+        self.zalo_alert_manager.mark_recovered()
 
         should_resume = bool(self.config.get("auto_resume_after_break", True))
         was_tracking = self.camera_running
@@ -2148,17 +3061,60 @@ class MainWindow(QMainWindow):
     def _open_settings(self):
         """Open settings dialog."""
         from .settings_dialog import SettingsDialog
-        dialog = SettingsDialog(self.config, self)
-        if dialog.exec():
-            self.config.update(dialog.get_config())
-            self._apply_config()
-            self.config_changed.emit(self.config.copy())
+
+        dialog = SettingsDialog(self.config, self, focus_audio_manager=self.focus_audio_manager)
+        dialog.config_applied.connect(self._on_settings_applied)
+        dialog.exec()
+
+    @pyqtSlot(dict)
+    def _on_settings_applied(self, updates: dict) -> None:
+        """Apply settings updates immediately without closing the dialog."""
+        self.config.update(dict(updates or {}))
+        self._apply_config()
+        self._sync_profile_scoped_settings_to_google()
+        self.config_changed.emit(self.config.copy())
+
+    @pyqtSlot()
+    def _request_logout(self) -> None:
+        """Request application-level logout and auth-gate return."""
+        confirm = NoticeDialog.confirm(
+            self,
+            "Đăng xuất",
+            "Bạn có chắc muốn đăng xuất khỏi phiên hiện tại?",
+            config=self.config,
+            confirm_text="Đăng xuất",
+            cancel_text="Ở lại",
+        )
+        if not confirm:
+            return
+        self.logout_requested.emit()
+
+    def refresh_authenticated_profile(self) -> None:
+        """Refresh profile-dependent runtime state after login/logout changes."""
+        self.profile_name = self._get_profile_name()
+        self.config["profile_name"] = self.profile_name
+        self._reset_profile_scoped_settings_to_defaults()
+        self._load_profile_scoped_settings_from_google(seed_if_missing=True)
+        self._apply_config()
+        self.config_changed.emit(self.config.copy())
 
     def _apply_config(self):
         """Apply configuration changes."""
+        self.config["enable_personalization"] = True
+        self.config["auto_apply_personalization"] = True
+        self.auth_manager.configure(self.config)
         self._apply_theme()
+        self._display_uncertain_hold_seconds = max(
+            0.8,
+            float(self.config.get("display_uncertain_hold_seconds", self._display_uncertain_hold_seconds)),
+        )
         self.profile_name = self._get_profile_name()
+        self.config["profile_name"] = self.profile_name
+        self.analytics_store.configure_google_sheets(self.config)
+        self.zalo_alert_manager.configure(self.config)
+        self.focus_audio_manager.load_from_config(self.config)
         self._apply_focus_engine_config()
+        self._apply_personalized_schedule()
 
         # Update camera if needed
         if self.vision_available and self.camera:
@@ -2223,6 +3179,7 @@ class MainWindow(QMainWindow):
                     )
                 )
                 self.phone_detector.initialize()
+                self.config["phone_detection_mode"] = "heuristic"
 
     @staticmethod
     def _parse_resolution(resolution: str) -> tuple[int, int]:
@@ -2242,8 +3199,23 @@ class MainWindow(QMainWindow):
         """Open the Focus Reset recovery dialog directly."""
         from ..focus_reset_game.ui import FocusResetDialog
 
-        recovery_dialog = FocusResetDialog(self)
+        recovery_dialog = FocusResetDialog(
+            self,
+            theme_mode=str(self.config.get("theme_mode", "light")),
+            app_sound_enabled=bool(self.config.get("enable_sounds", True)),
+            app_volume=int(self.config.get("volume", 70)),
+        )
         recovery_dialog.exec()  # Modal dialog
+
+    def stop_focus_audio(self) -> None:
+        """Stop focus background audio immediately."""
+        if hasattr(self, "focus_audio_manager") and self.focus_audio_manager is not None:
+            self.focus_audio_manager.stop()
+
+    def restore_focus_audio_from_config(self) -> None:
+        """Restore focus audio state from current runtime config."""
+        if hasattr(self, "focus_audio_manager") and self.focus_audio_manager is not None:
+            self.focus_audio_manager.load_from_config(self.config)
 
     def _sync_responsive_layout(self) -> None:
         """Adjust column balance for smaller widths without breaking the design."""
@@ -2267,6 +3239,116 @@ class MainWindow(QMainWindow):
             if hasattr(self, "right_column_scroll"):
                 self.right_column_scroll.setMinimumWidth(350)
 
+    def _resize_edges_from_local_pos(self, local_pos: QPoint) -> Qt.Edge:
+        """Compute frameless resize edges from local coordinates."""
+        if self.isMaximized() or self.isFullScreen():
+            return Qt.Edge(0)
+
+        x = int(local_pos.x())
+        y = int(local_pos.y())
+        w = max(1, self.width())
+        h = max(1, self.height())
+        m = max(4, int(self._resize_border_px))
+
+        on_left = 0 <= x <= m
+        on_right = (w - m - 1) <= x <= (w - 1)
+        on_top = 0 <= y <= m
+        on_bottom = (h - m - 1) <= y <= (h - 1)
+
+        edges = Qt.Edge(0)
+        if on_left:
+            edges |= Qt.Edge.LeftEdge
+        elif on_right:
+            edges |= Qt.Edge.RightEdge
+
+        if on_top:
+            edges |= Qt.Edge.TopEdge
+        elif on_bottom:
+            edges |= Qt.Edge.BottomEdge
+
+        return edges
+
+    @staticmethod
+    def _cursor_for_resize_edges(edges: Qt.Edge) -> Qt.CursorShape:
+        """Map resize edges to expected desktop resize cursors."""
+        has_left = bool(edges & Qt.Edge.LeftEdge)
+        has_right = bool(edges & Qt.Edge.RightEdge)
+        has_top = bool(edges & Qt.Edge.TopEdge)
+        has_bottom = bool(edges & Qt.Edge.BottomEdge)
+
+        if (has_top and has_left) or (has_bottom and has_right):
+            return Qt.CursorShape.SizeFDiagCursor
+        if (has_top and has_right) or (has_bottom and has_left):
+            return Qt.CursorShape.SizeBDiagCursor
+        if has_left or has_right:
+            return Qt.CursorShape.SizeHorCursor
+        if has_top or has_bottom:
+            return Qt.CursorShape.SizeVerCursor
+        return Qt.CursorShape.ArrowCursor
+
+    def _start_system_resize(self, edges: Qt.Edge) -> bool:
+        """Begin native frameless resize when the pointer is on a window edge."""
+        if edges == Qt.Edge(0):
+            return False
+        if self.isMaximized() or self.isFullScreen():
+            return False
+
+        handle = self.windowHandle()
+        if handle is None or not hasattr(handle, "startSystemResize"):
+            return False
+
+        try:
+            return bool(handle.startSystemResize(edges))
+        except RuntimeError:
+            return False
+
+    def _update_resize_cursor(self, global_pos: QPoint) -> None:
+        """Update cursor to communicate available edge/corner resize."""
+        local = self.mapFromGlobal(global_pos)
+        edges = self._resize_edges_from_local_pos(local)
+        shape = self._cursor_for_resize_edges(edges)
+
+        if shape == Qt.CursorShape.ArrowCursor:
+            self.unsetCursor()
+        else:
+            self.setCursor(shape)
+
+    def eventFilter(self, obj, event):
+        """Handle frameless resize from child widgets and the main surface."""
+        if isinstance(obj, QWidget) and obj.window() is self:
+            event_type = event.type()
+
+            if event_type == QEvent.Type.MouseMove and hasattr(event, "globalPosition"):
+                if not (event.buttons() & Qt.MouseButton.LeftButton):
+                    self._update_resize_cursor(event.globalPosition().toPoint())
+
+            elif event_type == QEvent.Type.MouseButtonPress and hasattr(event, "globalPosition"):
+                if event.button() == Qt.MouseButton.LeftButton:
+                    local = self.mapFromGlobal(event.globalPosition().toPoint())
+                    edges = self._resize_edges_from_local_pos(local)
+                    if edges != Qt.Edge(0) and self._start_system_resize(edges):
+                        return True
+
+            elif event_type == QEvent.Type.Leave:
+                self.unsetCursor()
+
+        return super().eventFilter(obj, event)
+
+    def _sync_title_bar_state(self) -> None:
+        """Keep frameless title bar controls and outer shell spacing in sync."""
+        if hasattr(self, "title_bar"):
+            self.title_bar.sync_window_state()
+
+        if not hasattr(self, "_root_layout"):
+            return
+
+        if self.isMaximized():
+            self._root_layout.setContentsMargins(0, 0, 0, 0)
+            self._root_layout.setSpacing(0)
+        else:
+            self._root_layout.setContentsMargins(10, 10, 10, 10)
+            self._root_layout.setSpacing(10)
+
     def resizeEvent(self, event):
         """Keep layout stable and readable as the window size changes."""
         super().resizeEvent(event)
@@ -2274,7 +3356,12 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Handle window close."""
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
+
         self._stop_tracking()
+        self.stop_focus_audio()
         # Close vision pipeline
         if hasattr(self, 'vision_pipeline') and self.vision_pipeline:
             self.vision_pipeline.close()
@@ -2288,6 +3375,4 @@ class MainWindow(QMainWindow):
         if event.type() != QEvent.Type.WindowStateChange:
             return
 
-        if self.isMinimized() and bool(self.config.get("minimize_to_tray", True)):
-            # Hide on the next event loop tick to avoid flicker/glitches on Windows.
-            QTimer.singleShot(0, self.hide)
+        self._sync_title_bar_state()

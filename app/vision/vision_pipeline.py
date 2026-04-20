@@ -147,6 +147,13 @@ class VisionPipeline:
         self._blink_threshold = 0.21
         self._blink_state = False
 
+    def set_blink_threshold(self, threshold: float) -> None:
+        """Update EAR threshold used by lightweight blink detection in this pipeline."""
+        try:
+            self._blink_threshold = max(0.12, min(0.35, float(threshold)))
+        except (TypeError, ValueError):
+            return
+
     def initialize(self, frame_width: int = 640, frame_height: int = 480) -> bool:
         """
         Initialize the pipeline.

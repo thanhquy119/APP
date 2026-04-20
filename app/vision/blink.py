@@ -59,6 +59,17 @@ class BlinkConfig:
 
 
 @dataclass
+class BlinkThresholdSnapshot:
+    """Snapshot of currently active blink/drowsy thresholds."""
+    ear_threshold: float
+    drowsy_ear_threshold: float
+    drowsy_closure_ratio: float
+    perclos_threshold: float
+    low_blink_rate: float
+    high_blink_rate: float
+
+
+@dataclass
 class BlinkEvent:
     """Record of a blink event."""
     timestamp: float
@@ -295,6 +306,52 @@ class BlinkDetector:
         self.config.drowsy_ear_threshold = open_ear * 0.55
         logger.info(f"Calibrated EAR thresholds: closed={self.config.ear_threshold:.3f}, "
                    f"drowsy={self.config.drowsy_ear_threshold:.3f}")
+
+    def calibrate_threshold_hybrid(
+        self,
+        open_ear: float,
+        personalization_weight: float,
+        default_open_ear: float = 0.30,
+    ) -> None:
+        """
+        Hybrid EAR calibration for cold-start to fully personalized transitions.
+
+        The method reuses calibrate_threshold() and blends with a default baseline
+        according to personalization_weight in [0, 1].
+        """
+        weight = max(0.0, min(1.0, float(personalization_weight)))
+
+        personal = BlinkDetector(BlinkConfig(
+            ear_threshold=self.config.ear_threshold,
+            drowsy_ear_threshold=self.config.drowsy_ear_threshold,
+        ))
+        personal.calibrate_threshold(max(0.15, min(0.40, float(open_ear))))
+
+        default_detector = BlinkDetector(BlinkConfig(
+            ear_threshold=self.config.ear_threshold,
+            drowsy_ear_threshold=self.config.drowsy_ear_threshold,
+        ))
+        default_detector.calibrate_threshold(max(0.20, min(0.40, float(default_open_ear))))
+
+        self.config.ear_threshold = (
+            (1.0 - weight) * default_detector.config.ear_threshold
+            + weight * personal.config.ear_threshold
+        )
+        self.config.drowsy_ear_threshold = (
+            (1.0 - weight) * default_detector.config.drowsy_ear_threshold
+            + weight * personal.config.drowsy_ear_threshold
+        )
+
+    def get_threshold_snapshot(self) -> BlinkThresholdSnapshot:
+        """Return active blink thresholds for diagnostics and persistence."""
+        return BlinkThresholdSnapshot(
+            ear_threshold=float(self.config.ear_threshold),
+            drowsy_ear_threshold=float(self.config.drowsy_ear_threshold),
+            drowsy_closure_ratio=float(self.config.drowsy_closure_ratio),
+            perclos_threshold=float(self.config.perclos_threshold),
+            low_blink_rate=float(self.config.low_blink_rate),
+            high_blink_rate=float(self.config.high_blink_rate),
+        )
 
     def draw_eyes(self, frame: np.ndarray, landmarks: FaceLandmarks,
                   state: BlinkState) -> np.ndarray:

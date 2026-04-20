@@ -18,3 +18,15 @@ env/
 
 # Local runtime files
 *.log
+google_service_account.json
+
+# Build and packaging artifacts
+build/
+build_*/
+dist/
+dist_*/
+*.spec.bak
+
+# Python packaging metadata
+*.egg-info/
+pip-wheel-metadata/

@@ -8,6 +8,7 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPen
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QDialog,
     QDoubleSpinBox,
@@ -104,12 +105,18 @@ class FocusResetDialog(QDialog):
         parent=None,
         config: FocusResetConfig | None = None,
         storage: SessionStorage | None = None,
+        theme_mode: str = "dark",
+        app_sound_enabled: bool = True,
+        app_volume: int = 70,
     ):
         super().__init__(parent)
 
         self.cfg = config or load_focus_reset_config()
-        self.theme = Theme()
+        self.theme_mode = "light" if str(theme_mode or "dark").strip().lower() == "light" else "dark"
+        self.theme = Theme.for_mode(self.theme_mode)
         self.storage = storage or SessionStorage(self.cfg.history_path)
+        self._app_sound_enabled = bool(app_sound_enabled)
+        self._app_volume = max(0, min(100, int(app_volume)))
 
         self._phase_timer = QTimer(self)
         self._phase_timer.timeout.connect(self._on_phase_tick)
@@ -135,6 +142,7 @@ class FocusResetDialog(QDialog):
         self.page_menu = self._build_menu_page()
         self.page_instructions = self._build_instructions_page()
         self.page_select = self._build_game_select_page()
+        self.page_settings = self._build_settings_page()
         self.page_history = self._build_history_page()
         self.page_session = self._build_session_page()
         self.page_results = self._build_results_page()
@@ -142,11 +150,13 @@ class FocusResetDialog(QDialog):
         self.stack.addWidget(self.page_menu)
         self.stack.addWidget(self.page_instructions)
         self.stack.addWidget(self.page_select)
+        self.stack.addWidget(self.page_settings)
         self.stack.addWidget(self.page_history)
         self.stack.addWidget(self.page_session)
         self.stack.addWidget(self.page_results)
         self.stack.currentChanged.connect(self._fit_to_current_page)
 
+        self._load_settings_to_controls()
         self._rebuild_sequence_symbol_buttons()
         self._show_menu()
         self._apply_window_geometry()
@@ -252,7 +262,7 @@ class FocusResetDialog(QDialog):
                 border-radius: 16px;
             }}
             QFrame#hero {{
-                background-color: #0b1323;
+                background-color: {self.theme.hero_bg};
                 border: 1px solid {self.theme.border};
                 border-radius: 16px;
             }}
@@ -282,25 +292,25 @@ class FocusResetDialog(QDialog):
                 min-height: 38px;
             }}
             QPushButton:hover {{
-                background-color: #17263d;
-                border-color: #3b5b7d;
+                background-color: {self.theme.interactive_hover};
+                border-color: {self.theme.accent_border};
             }}
             QPushButton#primary {{
                 background-color: {self.theme.accent};
-                color: #082032;
-                border: 1px solid #8ddcff;
+                color: {self.theme.accent_text};
+                border: 1px solid {self.theme.accent_border};
                 font-weight: 700;
             }}
             QPushButton#primary:hover {{
-                background-color: #0ea5e9;
-                border-color: #bae6fd;
+                background-color: {self.theme.accent_hover};
+                border-color: {self.theme.accent_border};
             }}
             QGroupBox {{
                 border: 1px solid {self.theme.border};
                 border-radius: 12px;
                 margin-top: 10px;
                 padding: 8px;
-                background-color: #0a1426;
+                background-color: {self.theme.panel_soft};
             }}
             QGroupBox::title {{
                 subcontrol-origin: margin;
@@ -310,11 +320,11 @@ class FocusResetDialog(QDialog):
                 font-weight: 700;
             }}
             QProgressBar {{
-                background-color: #08101f;
+                background-color: {self.theme.progress_bg};
                 border: 1px solid {self.theme.border};
                 border-radius: 8px;
                 text-align: center;
-                color: #020617;
+                color: {self.theme.text_primary};
                 min-height: 18px;
                 font-weight: 700;
             }}
@@ -323,22 +333,63 @@ class FocusResetDialog(QDialog):
                 border-radius: 7px;
             }}
             QTableWidget {{
-                background-color: #0a1426;
+                background-color: {self.theme.table_bg};
                 border: 1px solid {self.theme.border};
                 border-radius: 12px;
-                gridline-color: #1f334d;
+                gridline-color: {self.theme.table_grid};
                 color: {self.theme.text_primary};
-                selection-background-color: #123354;
+                selection-background-color: {self.theme.selection_bg};
             }}
             QHeaderView::section {{
-                background-color: #111f35;
-                color: #cbd5e1;
+                background-color: {self.theme.table_header_bg};
+                color: {self.theme.text_primary};
                 border: none;
-                border-right: 1px solid #1f334d;
+                border-right: 1px solid {self.theme.table_grid};
                 padding: 8px;
                 font-weight: 700;
             }}
         """
+
+    def _interactive_button_style(self) -> str:
+        return (
+            "QPushButton {"
+            f"background-color: {self.theme.interactive_bg};"
+            f"border: 1px solid {self.theme.interactive_border};"
+            "border-radius: 8px;"
+            "font-size: 18px;"
+            "font-weight: 700;"
+            "padding: 4px;"
+            "min-height: 30px;"
+            "}"
+            f"QPushButton:hover {{ background-color: {self.theme.interactive_hover}; }}"
+        )
+
+    def _play_feedback_sound(self, kind: str) -> None:
+        """Play subtle sound cues when enabled in both app and game settings."""
+        if not self._app_sound_enabled or not bool(self.cfg.sound_enabled):
+            return
+        if self._app_volume <= 0:
+            return
+
+        kind_name = str(kind or "info").strip().lower()
+        if kind_name not in {"success", "error", "info"}:
+            kind_name = "info"
+
+        try:
+            import winsound
+
+            tone_map = {
+                "success": 860,
+                "error": 470,
+                "info": 700,
+            }
+            duration = max(25, min(95, int(25 + (self._app_volume * 0.7))))
+            winsound.Beep(int(tone_map[kind_name]), int(duration))
+            return
+        except Exception:
+            pass
+
+        QApplication.beep()
 
     def _build_menu_page(self) -> QWidget:
         page = QWidget()
@@ -374,6 +425,10 @@ class FocusResetDialog(QDialog):
         instructions_btn = QPushButton("Hướng dẫn")
         instructions_btn.clicked.connect(self._show_instructions)
         panel_layout.addWidget(instructions_btn)
+
+        settings_btn = QPushButton("Cài đặt mini-game")
+        settings_btn.clicked.connect(self._show_settings)
+        panel_layout.addWidget(settings_btn)
 
         history_btn = QPushButton("Lịch sử")
         history_btn.clicked.connect(self._show_history)
@@ -525,7 +580,7 @@ class FocusResetDialog(QDialog):
 
         metrics = QLabel(metric_line)
         metrics.setWordWrap(True)
-        metrics.setStyleSheet("color: #93c5fd;")
+        metrics.setStyleSheet(f"color: {self.theme.info_text};")
         text_col.addWidget(metrics)
 
         row.addLayout(text_col, 1)
@@ -960,8 +1015,8 @@ class FocusResetDialog(QDialog):
         self.result_feedback = QLabel("")
         self.result_feedback.setWordWrap(True)
         self.result_feedback.setStyleSheet(
-            "background-color: #0a1426; border: 1px solid #233347; border-radius: 12px; "
-            "padding: 12px; font-size: 15px;"
+            f"background-color: {self.theme.panel_soft}; border: 1px solid {self.theme.border}; "
+            f"border-radius: 12px; color: {self.theme.text_primary}; padding: 12px; font-size: 15px;"
         )
         panel_layout.addWidget(self.result_feedback)
 
@@ -1007,7 +1062,9 @@ class FocusResetDialog(QDialog):
         self.stack.setCurrentWidget(self.page_select)
 
     def _show_settings(self) -> None:
-        self._show_menu()
+        self._load_settings_to_controls()
+        self.settings_status.setText("")
+        self.stack.setCurrentWidget(self.page_settings)
 
     def _show_history(self) -> None:
         self._load_history_table()
@@ -1020,6 +1077,11 @@ class FocusResetDialog(QDialog):
         self.spin_inhale.setValue(float(self.cfg.inhale_seconds))
         self.spin_exhale.setValue(float(self.cfg.exhale_seconds))
         self.chk_sound.setChecked(bool(self.cfg.sound_enabled))
+        self.chk_sound.setEnabled(self._app_sound_enabled)
+        if not self._app_sound_enabled:
+            self.chk_sound.setToolTip("Bat am thanh chung trong app de su dung feedback sound.")
+        else:
+            self.chk_sound.setToolTip("")
 
         self.spin_gonogo_duration.setValue(int(self.cfg.gonogo.round_duration_s))
         self.spin_gonogo_target_prob.setValue(float(self.cfg.gonogo.target_probability))
@@ -1050,7 +1112,7 @@ class FocusResetDialog(QDialog):
         self.cfg.final_breathing_break_s = int(self.spin_final_break.value())
         self.cfg.inhale_seconds = float(self.spin_inhale.value())
         self.cfg.exhale_seconds = float(self.spin_exhale.value())
-        self.cfg.sound_enabled = bool(self.chk_sound.isChecked())
+        self.cfg.sound_enabled = bool(self.chk_sound.isChecked() and self._app_sound_enabled)
 
         self.cfg.gonogo.round_duration_s = int(self.spin_gonogo_duration.value())
         self.cfg.gonogo.target_probability = float(self.spin_gonogo_target_prob.value())
@@ -1361,14 +1423,17 @@ class FocusResetDialog(QDialog):
         )
 
         if correct:
-            self.sequence_feedback.setStyleSheet("color: #86efac;")
+            self.sequence_feedback.setStyleSheet(f"color: {self.theme.success_text};")
             self.sequence_feedback.setText("Đúng")
+            self._play_feedback_sound("success")
         elif timeout:
-            self.sequence_feedback.setStyleSheet("color: #fca5a5;")
+            self.sequence_feedback.setStyleSheet(f"color: {self.theme.error_text};")
             self.sequence_feedback.setText("Hết giờ")
+            self._play_feedback_sound("error")
         else:
-            self.sequence_feedback.setStyleSheet("color: #fca5a5;")
+            self.sequence_feedback.setStyleSheet(f"color: {self.theme.error_text};")
             self.sequence_feedback.setText("Sai thứ tự")
+            self._play_feedback_sound("error")
 
         self._sequence_round_index += 1
         progress = int((self._sequence_round_index / max(1, len(self._sequence_round_sequences))) * 100)
@@ -1379,10 +1444,11 @@ class FocusResetDialog(QDialog):
 
     def _finish_sequence_phase(self) -> None:
         self._sequence_summary = evaluate_sequence(self._sequence_results)
-        self.sequence_feedback.setStyleSheet("color: #93c5fd;")
+        self.sequence_feedback.setStyleSheet(f"color: {self.theme.info_text};")
         self.sequence_feedback.setText(
             f"Hoàn thành - Chính xác: {self._sequence_summary.accuracy:.1f}% | Độ dài tối đa: {self._sequence_summary.max_sequence_length}"
         )
+        self._play_feedback_sound("info")
         QTimer.singleShot(550, self._advance_step)
 
     def _start_visual_phase(self) -> None:
@@ -1425,21 +1491,11 @@ class FocusResetDialog(QDialog):
         self._clear_layout(self.visual_grid_layout)
         self.visual_buttons = []
 
+        style = self._interactive_button_style()
         for idx in range(spec.rows * spec.cols):
             text = spec.target_symbol if idx == spec.target_index else spec.distractor_symbol
             btn = QPushButton(text)
-            btn.setStyleSheet(
-                "QPushButton {"
-                "background-color: #101e32;"
-                "border: 1px solid #304860;"
-                "border-radius: 8px;"
-                "font-size: 18px;"
-                "font-weight: 700;"
-                "padding: 4px;"
-                "min-height: 30px;"
-                "}"
-                "QPushButton:hover { background-color: #17304f; }"
-            )
+            btn.setStyleSheet(style)
             btn.clicked.connect(lambda _checked=False, i=idx: self._on_visual_cell_clicked(i))
             self.visual_grid_layout.addWidget(btn, idx // spec.cols, idx % spec.cols)
             self.visual_buttons.append(btn)
@@ -1449,13 +1505,14 @@ class FocusResetDialog(QDialog):
             return
 
         if index == self._visual_target_index:
-            self.visual_status.setStyleSheet("color: #86efac;")
+            self.visual_status.setStyleSheet(f"color: {self.theme.success_text};")
             self.visual_status.setText("Đã tìm thấy mục tiêu")
+            self._play_feedback_sound("success")
             self._finish_visual_round(correct=True, timeout=False)
             return
 
         self._visual_round_miss_clicks += 1
-        self.visual_status.setStyleSheet("color: #fca5a5;")
+        self.visual_status.setStyleSheet(f"color: {self.theme.error_text};")
         self.visual_status.setText(f"Số lần bấm sai: {self._visual_round_miss_clicks}")
 
     def _finish_visual_round(self, correct: bool, timeout: bool) -> None:
@@ -1483,14 +1540,18 @@ class FocusResetDialog(QDialog):
         progress = int((self._visual_round_index / max(1, len(self._visual_specs))) * 100)
         self.phase_progress.setValue(max(0, min(100, progress)))
 
+        if timeout and not correct:
+            self._play_feedback_sound("error")
+
         QTimer.singleShot(450, self._start_visual_round)
 
     def _finish_visual_phase(self) -> None:
         self._visual_summary = evaluate_visual(self._visual_results)
-        self.visual_status.setStyleSheet("color: #93c5fd;")
+        self.visual_status.setStyleSheet(f"color: {self.theme.info_text};")
         self.visual_status.setText(
             f"Hoàn thành - Chính xác: {self._visual_summary.accuracy:.1f}% | Bấm sai: {self._visual_summary.miss_click_count}"
         )
+        self._play_feedback_sound("info")
         QTimer.singleShot(550, self._advance_step)
 
     def _start_break_phase(self, final: bool) -> None:
@@ -1538,7 +1599,7 @@ class FocusResetDialog(QDialog):
 
         if self._phase_mode == "visual":
             if elapsed_ms >= self._phase_duration_ms and not self._visual_round_resolved:
-                self.visual_status.setStyleSheet("color: #fca5a5;")
+                self.visual_status.setStyleSheet(f"color: {self.theme.error_text};")
                 self.visual_status.setText("Hết giờ")
                 self._finish_visual_round(correct=False, timeout=True)
 
@@ -1574,14 +1635,16 @@ class FocusResetDialog(QDialog):
 
         if mode == "baseline":
             self._baseline_summary = summary
-            self.attention_feedback.setStyleSheet("color: #93c5fd;")
+            self.attention_feedback.setStyleSheet(f"color: {self.theme.info_text};")
             self.attention_feedback.setText("Đã xong baseline")
         else:
             self._gonogo_summary = summary
-            self.attention_feedback.setStyleSheet("color: #93c5fd;")
+            self.attention_feedback.setStyleSheet(f"color: {self.theme.info_text};")
             self.attention_feedback.setText(
                 f"Hoàn thành Go/No-Go - Chính xác: {summary.accuracy:.1f}% | Ổn định: {summary.focus_stability:.1f}"
             )
+
+        self._play_feedback_sound("info")
 
         QTimer.singleShot(500, self._advance_step)
 
@@ -1628,6 +1691,7 @@ class FocusResetDialog(QDialog):
         self.storage.append(record)
 
         self.stack.setCurrentWidget(self.page_results)
+        self._play_feedback_sound("info")
 
     def _render_results(self, summary: SessionSummary) -> None:
         self.result_focus.setText(f"{summary.focus_stability:.1f} / 100")
@@ -1704,8 +1768,9 @@ class FocusResetDialog(QDialog):
 
         if idx is None:
             self._phase_extra_commissions += 1
-            self.attention_feedback.setStyleSheet("color: #fca5a5;")
+            self.attention_feedback.setStyleSheet(f"color: {self.theme.error_text};")
             self.attention_feedback.setText("Bấm quá sớm / chưa có mục tiêu")
+            self._play_feedback_sound("error")
             return
 
         if idx in self._phase_responses:
@@ -1715,11 +1780,13 @@ class FocusResetDialog(QDialog):
         trial = self._phase_trials[idx]
 
         if trial.is_target:
-            self.attention_feedback.setStyleSheet("color: #86efac;")
+            self.attention_feedback.setStyleSheet(f"color: {self.theme.success_text};")
             self.attention_feedback.setText(f"Trúng: {int(rt_ms or 0)} ms")
+            self._play_feedback_sound("success")
         else:
-            self.attention_feedback.setStyleSheet("color: #fca5a5;")
+            self.attention_feedback.setStyleSheet(f"color: {self.theme.error_text};")
             self.attention_feedback.setText("Lỗi bấm sai (No-Go)")
+            self._play_feedback_sound("error")
 
     def _abort_session(self) -> None:
         self._stop_all_timers()
@@ -1771,21 +1838,11 @@ class FocusResetDialog(QDialog):
         self._clear_layout(self.sequence_buttons_row)
         self.sequence_symbol_buttons = []
 
+        style = self._interactive_button_style().replace("border-radius: 8px;", "border-radius: 10px;")
         for symbol in self.cfg.sequence.symbols:
             btn = QPushButton(symbol)
             btn.setEnabled(False)
-            btn.setStyleSheet(
-                "QPushButton {"
-                "background-color: #101e32;"
-                "border: 1px solid #304860;"
-                "border-radius: 10px;"
-                "font-size: 18px;"
-                "font-weight: 700;"
-                "min-width: 66px;"
-                "padding: 8px;"
-                "}"
-                "QPushButton:hover { background-color: #17304f; }"
-            )
+            btn.setStyleSheet(style + "QPushButton { min-width: 66px; padding: 8px; }")
             btn.clicked.connect(lambda _checked=False, s=symbol: self._on_sequence_symbol(s))
             self.sequence_buttons_row.addWidget(btn)
             self.sequence_symbol_buttons.append(btn)

@@ -1,0 +1,17 @@
+{
+  "profile_name": "hihihi",
+  "session_count": 0,
+  "blink_rate_baseline": 12.0,
+  "avg_ear_baseline": 0.25,
+  "eye_closure_ratio_baseline": 0.12,
+  "perclos_baseline": 0.08,
+  "average_focus_score_baseline": 75.0,
+  "average_distraction_density": 3.0,
+  "average_fatigue_onset_minutes": 35.0,
+  "focus_score_decay_per_hour": 0.0,
+  "recommended_work_minutes": 25,
+  "recommended_break_minutes": 5,
+  "last_quality_score": 0.0,
+  "personalization_weight": 0.08,
+  "updated_at": 1776658284
+}

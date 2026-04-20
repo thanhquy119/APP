@@ -1,0 +1,17 @@
+{
+  "profile_name": "qa_probe",
+  "session_count": 1,
+  "blink_rate_baseline": 11.3,
+  "avg_ear_baseline": 0.25,
+  "eye_closure_ratio_baseline": 0.11299999999999999,
+  "perclos_baseline": 0.08000000000000002,
+  "average_focus_score_baseline": 78.29933333333332,
+  "average_distraction_density": 1.9500000000000002,
+  "average_fatigue_onset_minutes": 24.820833333333333,
+  "focus_score_decay_per_hour": 10.726000000000003,
+  "recommended_work_minutes": 20,
+  "recommended_break_minutes": 5,
+  "last_quality_score": 0.7673833333333334,
+  "personalization_weight": 0.12,
+  "updated_at": 1776091481
+}

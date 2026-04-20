@@ -1,0 +1,17 @@
+{
+  "profile_name": "hehe",
+  "session_count": 1,
+  "blink_rate_baseline": 4.0,
+  "avg_ear_baseline": 0.3811835621765624,
+  "eye_closure_ratio_baseline": 0.01,
+  "perclos_baseline": 0.01,
+  "average_focus_score_baseline": 97.1271514674863,
+  "average_distraction_density": 6.504030712527744e-11,
+  "average_fatigue_onset_minutes": 35.0,
+  "focus_score_decay_per_hour": -20.249618413279208,
+  "recommended_work_minutes": 24,
+  "recommended_break_minutes": 6,
+  "last_quality_score": 0.7916044810557148,
+  "personalization_weight": 0.12,
+  "updated_at": 1776657706
+}

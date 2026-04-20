@@ -1,0 +1,31 @@
+{
+  "profile_name": "default",
+  "created_at": 1776676380,
+  "updated_at": 1776676380,
+  "sessions": [],
+  "recommendation": {
+    "work_minutes": 25,
+    "break_minutes": 5,
+    "confidence": 0.0,
+    "reason": "Not enough history yet",
+    "based_on_sessions": 0,
+    "adaptation_stage": "cold_start"
+  },
+  "baseline": {
+    "profile_name": "default",
+    "session_count": 28,
+    "blink_rate_baseline": 10.311529453803265,
+    "avg_ear_baseline": 0.38252588330099746,
+    "eye_closure_ratio_baseline": 0.048285426164491996,
+    "perclos_baseline": 0.06345725731647865,
+    "average_focus_score_baseline": 84.7657300714426,
+    "average_distraction_density": 9.843592287644082,
+    "average_fatigue_onset_minutes": 5.0,
+    "focus_score_decay_per_hour": 90.0,
+    "recommended_work_minutes": 15,
+    "recommended_break_minutes": 12,
+    "last_quality_score": 0.6117114281037982,
+    "personalization_weight": 0.87,
+    "updated_at": 1776330566
+  }
+}
