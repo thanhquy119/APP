@@ -53,6 +53,7 @@ class AuthManager:
         profile_name: str = "",
         login_at: Optional[int] = None,
         login_at_iso: str = "",
+        verify_backend: bool = False,
     ) -> AuthResult:
         """Restore session from locally cached identity data.
 
@@ -65,7 +66,7 @@ class AuthManager:
             return AuthResult(False, "Thiếu dữ liệu phiên đăng nhập đã lưu")
 
         user = None
-        backend_ok = self._store.ensure_available()
+        backend_ok = self._store.ensure_available() if verify_backend else False
         if backend_ok:
             if key_user_id:
                 user = self._store.find_by_user_id(key_user_id)

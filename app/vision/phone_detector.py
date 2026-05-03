@@ -8,7 +8,9 @@ import numpy as np
 import cv2
 import logging
 import importlib
-from typing import Optional, Tuple, NamedTuple
+import time
+from collections import deque
+from typing import Optional, Tuple, NamedTuple, Deque, Any
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -19,6 +21,22 @@ class PhoneState(NamedTuple):
     phone_present: bool
     confidence: float
     bbox: Optional[Tuple[int, int, int, int]]  # x, y, w, h
+    evidence_source: str = "disabled"
+    strong_present: bool = False
+    detector_available: bool = False
+    frame_evaluated: bool = False
+
+    @property
+    def phone_confidence(self) -> float:
+        return float(self.confidence)
+
+    @property
+    def phone_bbox(self) -> Optional[Tuple[int, int, int, int]]:
+        return self.bbox
+
+    @property
+    def phone_evidence_source(self) -> str:
+        return str(self.evidence_source)
 
 
 @dataclass
@@ -28,6 +46,10 @@ class PhoneDetectorConfig:
     model_type: str = "heuristic"  # "heuristic", "stub", "yolov8", "mediapipe"
     confidence_threshold: float = 0.55
     model_path: Optional[str] = None
+    run_interval_frames: int = 3
+    confirmation_window_seconds: float = 2.5
+    confirmation_min_hits: int = 5          # raised from 3 → 5 to reduce false positives
+    heuristic_confidence_cap: float = 0.57  # lowered from 0.62 to limit heuristic overconfidence
 
 
 class PhoneDetector:
@@ -52,16 +74,38 @@ class PhoneDetector:
         self._model = None
         self._initialized = False
         self._detection_count = 0
+        self._detector_available = False
+        self._frame_index = 0
+        self._last_raw_state = PhoneState(False, 0.0, None, evidence_source="disabled", detector_available=False)
+        self._last_output_state = PhoneState(False, 0.0, None, evidence_source="disabled", detector_available=False)
+        self._evidence: Deque[dict[str, Any]] = deque(maxlen=240)
+
+    @staticmethod
+    def _clamp(value: float, low: float, high: float) -> float:
+        return max(low, min(high, float(value)))
+
+    def _empty_state(self, source: str, available: bool, evaluated: bool = False) -> PhoneState:
+        return PhoneState(
+            phone_present=False,
+            confidence=0.0,
+            bbox=None,
+            evidence_source=source,
+            strong_present=False,
+            detector_available=available,
+            frame_evaluated=evaluated,
+        )
 
     def initialize(self) -> bool:
         """Initialize phone detector."""
         if not self.config.enabled:
             logger.info("Phone detection disabled (stub mode)")
             self._initialized = True
+            self._detector_available = False
             return True
 
         if self.config.model_type == "heuristic":
             self._initialized = True
+            self._detector_available = True
             logger.info("Phone detection: heuristic mode enabled")
             return True
         if self.config.model_type == "yolov8":
@@ -71,6 +115,7 @@ class PhoneDetector:
         else:
             logger.info("Phone detection: using stub (no actual detection)")
             self._initialized = True
+            self._detector_available = False
             return True
 
     def _init_yolov8(self) -> bool:
@@ -82,14 +127,17 @@ class PhoneDetector:
             model_path = self.config.model_path or "yolov8n.pt"
             self._model = YOLO(model_path)
             self._initialized = True
+            self._detector_available = True
             logger.info(f"YOLOv8 phone detector initialized: {model_path}")
             return True
 
         except ImportError:
             logger.warning("ultralytics not installed. Run: pip install ultralytics")
+            self._detector_available = False
             return False
         except Exception as e:
             logger.error(f"Failed to initialize YOLOv8: {e}")
+            self._detector_available = False
             return False
 
     def _init_mediapipe(self) -> bool:
@@ -100,18 +148,23 @@ class PhoneDetector:
             # mediapipe.tasks.vision.ObjectDetector
             logger.warning("MediaPipe object detection not fully implemented")
             self._initialized = True
+            self._detector_available = False
             return True
 
         except Exception as e:
             logger.error(f"Failed to initialize MediaPipe: {e}")
+            self._detector_available = False
             return False
 
     def release(self) -> None:
         """Release resources."""
         self._model = None
         self._initialized = False
+        self._detector_available = False
+        self._evidence.clear()
+        self._frame_index = 0
 
-    def process(self, frame: np.ndarray) -> PhoneState:
+    def process(self, frame: np.ndarray, timestamp_ms: Optional[int] = None) -> PhoneState:
         """
         Detect phone in frame.
 
@@ -121,26 +174,99 @@ class PhoneDetector:
         Returns:
             PhoneState with detection results
         """
-        if not self._initialized or not self.config.enabled:
-            return PhoneState(phone_present=False, confidence=0.0, bbox=None)
+        if not self._initialized:
+            return self._empty_state("unavailable", available=False, evaluated=False)
+
+        if not self.config.enabled:
+            return self._empty_state("disabled", available=False, evaluated=False)
 
         self._detection_count += 1
+        self._frame_index += 1
 
+        if timestamp_ms is None:
+            timestamp_ms = int(time.time() * 1000)
+        now_s = float(timestamp_ms) / 1000.0
+
+        run_interval = max(1, int(self.config.run_interval_frames))
+        should_run_backend = (self._frame_index % run_interval == 0) or (self._frame_index <= 2)
+
+        if not self._detector_available and self.config.model_type == "yolov8":
+            return self._empty_state("unavailable", available=False, evaluated=False)
+
+        if should_run_backend:
+            raw_state = self._run_backend(frame)
+            self._last_raw_state = raw_state
+            self._record_evidence(now_s, raw_state)
+        else:
+            raw_state = self._last_raw_state
+
+        output_state = self._build_temporal_state(now_s, raw_state, evaluated=should_run_backend)
+        self._last_output_state = output_state
+        return output_state
+
+    def _run_backend(self, frame: np.ndarray) -> PhoneState:
         if self.config.model_type == "heuristic":
             return self._process_heuristic(frame)
+
         if self.config.model_type == "yolov8" and self._model is not None:
             return self._process_yolov8(frame)
-        elif self.config.model_type == "mediapipe":
+
+        if self.config.model_type == "mediapipe":
             return self._process_mediapipe(frame)
+
+        return self._empty_state("stub", available=False, evaluated=True)
+
+    def _record_evidence(self, timestamp_s: float, raw_state: PhoneState) -> None:
+        self._evidence.append(
+            {
+                "ts": float(timestamp_s),
+                "present": bool(raw_state.phone_present),
+                "conf": float(raw_state.confidence),
+                "bbox": raw_state.bbox,
+                "source": str(raw_state.evidence_source),
+            }
+        )
+        cutoff = float(timestamp_s) - max(0.6, float(self.config.confirmation_window_seconds))
+        while self._evidence and self._evidence[0]["ts"] < cutoff:
+            self._evidence.popleft()
+
+    def _build_temporal_state(self, timestamp_s: float, raw_state: PhoneState, evaluated: bool) -> PhoneState:
+        cutoff = float(timestamp_s) - max(0.6, float(self.config.confirmation_window_seconds))
+        samples = [item for item in self._evidence if item["ts"] >= cutoff and item["source"] == raw_state.evidence_source]
+
+        threshold = self._clamp(self.config.confidence_threshold, 0.05, 0.95)
+        hits = [item for item in samples if item["present"] and item["conf"] >= threshold * 0.9]
+        min_hits = max(1, int(self.config.confirmation_min_hits))
+        strong_present = len(hits) >= min_hits
+
+        if strong_present and hits:
+            confidence = max(float(item["conf"]) for item in hits)
+            bbox = hits[-1]["bbox"]
         else:
-            # Stub - always returns no phone
-            return PhoneState(phone_present=False, confidence=0.0, bbox=None)
+            confidence = float(raw_state.confidence)
+            bbox = raw_state.bbox
+
+        if raw_state.evidence_source == "heuristic":
+            confidence = min(confidence, self._clamp(self.config.heuristic_confidence_cap, 0.45, 0.70))
+
+        present = bool(strong_present)
+
+        return PhoneState(
+            phone_present=present,
+            confidence=self._clamp(confidence, 0.0, 1.0),
+            bbox=bbox if present else None,
+            evidence_source=raw_state.evidence_source,
+            strong_present=strong_present,
+            detector_available=bool(raw_state.detector_available),
+            frame_evaluated=bool(evaluated),
+        )
 
     def _process_heuristic(self, frame: np.ndarray) -> PhoneState:
         """
         Detect phone-like rectangular objects with OpenCV heuristics.
 
         This fallback is intentionally lightweight and works without extra models.
+        Stricter shape/size constraints reduce false positives from books, cups, monitors.
         """
         try:
             h, w = frame.shape[:2]
@@ -157,8 +283,9 @@ class PhoneDetector:
             best_conf = 0.0
             best_bbox: Optional[Tuple[int, int, int, int]] = None
 
-            min_area = frame_area * 0.015
-            max_area = frame_area * 0.70
+            # Phones are typically 3–15 % of frame area; wider range misses context
+            min_area = frame_area * 0.020
+            max_area = frame_area * 0.40   # was 0.70 — monitors/books excluded
 
             for cnt in contours:
                 contour_area = float(cv2.contourArea(cnt))
@@ -166,11 +293,11 @@ class PhoneDetector:
                     continue
 
                 perimeter = cv2.arcLength(cnt, True)
-                if perimeter < 40:
+                if perimeter < 50:
                     continue
 
                 approx = cv2.approxPolyDP(cnt, 0.03 * perimeter, True)
-                if len(approx) < 4 or len(approx) > 10:
+                if len(approx) < 4 or len(approx) > 8:  # was 10 — stricter polygon
                     continue
 
                 x, y, bw, bh = cv2.boundingRect(approx)
@@ -182,33 +309,46 @@ class PhoneDetector:
                     continue
 
                 fill_ratio = contour_area / rect_area
-                if fill_ratio < 0.52:
+                if fill_ratio < 0.60:   # was 0.52 — tighter fill required
                     continue
 
-                short_over_long = min(bw, bh) / max(bw, bh)
-                aspect_score = max(0.0, 1.0 - abs(short_over_long - 0.56) / 0.36)
+                short_side = min(bw, bh)
+                long_side = max(bw, bh)
+                short_over_long = short_side / long_side
+
+                # Phone aspect ratio: 0.40–0.60 (portrait) or 0.55–0.70 (landscape)
+                # Books tend to be 0.65–0.80; cups are nearly square (0.85+)
+                is_portrait_ratio = 0.38 <= short_over_long <= 0.62
+                is_landscape_ratio = 0.55 <= short_over_long <= 0.72
+                if not (is_portrait_ratio or is_landscape_ratio):
+                    continue
+
+                # Tight aspect score: reward ratios closest to 0.50 (portrait) or 0.625 (landscape)
+                target = 0.50 if is_portrait_ratio else 0.625
+                aspect_score = max(0.0, 1.0 - abs(short_over_long - target) / 0.18)
 
                 area_ratio = rect_area / frame_area
-                area_score = max(0.0, min(1.0, (area_ratio - 0.015) / 0.22))
+                area_score = max(0.0, min(1.0, (area_ratio - 0.020) / 0.20))
 
-                fill_score = max(0.0, min(1.0, (fill_ratio - 0.52) / 0.38))
+                fill_score = max(0.0, min(1.0, (fill_ratio - 0.60) / 0.30))
 
                 roi_edges = edges[y:y + bh, x:x + bw]
                 edge_density = float(np.count_nonzero(roi_edges)) / max(1.0, float(roi_edges.size))
-                edge_score = max(0.0, min(1.0, (edge_density - 0.03) / 0.20))
+                edge_score = max(0.0, min(1.0, (edge_density - 0.04) / 0.18))
 
+                # Phones are typically held in front, not pressed to frame edge
                 cx = x + bw / 2.0
                 cy = y + bh / 2.0
                 nx = (cx - (w / 2.0)) / max(1.0, w / 2.0)
                 ny = (cy - (h / 2.0)) / max(1.0, h / 2.0)
                 center_dist = (nx * nx + ny * ny) ** 0.5
-                center_score = max(0.0, 1.0 - min(1.0, center_dist))
+                center_score = max(0.0, 1.0 - min(1.0, center_dist * 1.3))
 
                 confidence = (
-                    0.35 * aspect_score
+                    0.38 * aspect_score
                     + 0.22 * fill_score
-                    + 0.20 * area_score
-                    + 0.15 * edge_score
+                    + 0.18 * area_score
+                    + 0.14 * edge_score
                     + 0.08 * center_score
                 )
 
@@ -216,14 +356,37 @@ class PhoneDetector:
                     best_conf = confidence
                     best_bbox = (x, y, bw, bh)
 
-            if best_conf >= self.config.confidence_threshold and best_bbox is not None:
-                return PhoneState(phone_present=True, confidence=best_conf, bbox=best_bbox)
+            best_conf = min(best_conf, self._clamp(self.config.heuristic_confidence_cap, 0.45, 0.70))
 
-            return PhoneState(phone_present=False, confidence=best_conf, bbox=None)
+            if best_conf >= self.config.confidence_threshold and best_bbox is not None:
+                return PhoneState(
+                    phone_present=True,
+                    confidence=best_conf,
+                    bbox=best_bbox,
+                    evidence_source="heuristic",
+                    detector_available=True,
+                    frame_evaluated=True,
+                )
+
+            return PhoneState(
+                phone_present=False,
+                confidence=best_conf,
+                bbox=None,
+                evidence_source="heuristic",
+                detector_available=True,
+                frame_evaluated=True,
+            )
 
         except Exception as e:
             logger.debug(f"Heuristic phone detection error: {e}")
-            return PhoneState(phone_present=False, confidence=0.0, bbox=None)
+            return PhoneState(
+                phone_present=False,
+                confidence=0.0,
+                bbox=None,
+                evidence_source="heuristic",
+                detector_available=True,
+                frame_evaluated=True,
+            )
 
     def _process_yolov8(self, frame: np.ndarray) -> PhoneState:
         """Process with YOLOv8."""
@@ -245,26 +408,50 @@ class PhoneDetector:
                     return PhoneState(
                         phone_present=True,
                         confidence=conf,
-                        bbox=(x1, y1, x2 - x1, y2 - y1)
+                        bbox=(x1, y1, x2 - x1, y2 - y1),
+                        evidence_source="yolov8",
+                        detector_available=True,
+                        frame_evaluated=True,
                     )
 
-            return PhoneState(phone_present=False, confidence=0.0, bbox=None)
+            return PhoneState(
+                phone_present=False,
+                confidence=0.0,
+                bbox=None,
+                evidence_source="yolov8",
+                detector_available=True,
+                frame_evaluated=True,
+            )
 
         except Exception as e:
             logger.error(f"YOLOv8 processing error: {e}")
-            return PhoneState(phone_present=False, confidence=0.0, bbox=None)
+            return PhoneState(
+                phone_present=False,
+                confidence=0.0,
+                bbox=None,
+                evidence_source="yolov8",
+                detector_available=False,
+                frame_evaluated=True,
+            )
 
     def _process_mediapipe(self, frame: np.ndarray) -> PhoneState:
         """Process with MediaPipe (placeholder)."""
-        # Placeholder implementation
-        return PhoneState(phone_present=False, confidence=0.0, bbox=None)
+        _ = frame
+        return PhoneState(
+            phone_present=False,
+            confidence=0.0,
+            bbox=None,
+            evidence_source="mediapipe",
+            detector_available=False,
+            frame_evaluated=True,
+        )
 
     def draw_detection(self, frame: np.ndarray, state: PhoneState) -> np.ndarray:
         """Draw phone detection on frame."""
         if state.phone_present and state.bbox is not None:
             x, y, w, h = state.bbox
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
-            cv2.putText(frame, f"PHONE {state.confidence:.2f}", (x, y - 10),
+            cv2.putText(frame, f"PHONE {state.confidence:.2f} ({state.evidence_source})", (x, y - 10),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
         # Show status
@@ -275,6 +462,9 @@ class PhoneDetector:
         elif state.phone_present:
             status += "DETECTED"
             color = (0, 0, 255)
+        elif not state.detector_available:
+            status += "Unavailable"
+            color = (0, 165, 255)
         else:
             status += "Not detected"
             color = (0, 255, 0)

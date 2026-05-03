@@ -9,7 +9,7 @@ from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QDialog,
     QFormLayout,
-    QGroupBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -234,8 +234,8 @@ class AuthDialog(QDialog):
         self.setWindowTitle("FocusGuardian")
         self.setModal(True)
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
-        self.setMinimumWidth(460)
-        self.setMinimumHeight(380)
+        self.setMinimumSize(540, 500)
+        self.resize(560, 530)
         self._init_ui()
         self._apply_theme(self._theme_mode == "dark")
 
@@ -247,11 +247,11 @@ class AuthDialog(QDialog):
         return bool(
             NoticeDialog.confirm(
                 self,
-                "Thoát ứng dụng",
-                "Bạn chưa đăng nhập. Bạn có muốn thoát ứng dụng không?",
+                "Rời FocusGuardian",
+                "Bạn chưa đăng nhập. Ứng dụng sẽ đóng nếu bạn rời màn hình này.",
                 config=self.config,
-                confirm_text="Thoát ứng dụng",
-                cancel_text="Ở lại",
+                confirm_text="Thoát",
+                cancel_text="Tiếp tục đăng nhập",
             )
         )
 
@@ -260,42 +260,84 @@ class AuthDialog(QDialog):
         base = get_stylesheet(is_dark)
 
         if is_dark:
+            text = "#edf4fd"
             muted = "#b5c6db"
             ok = "#8ff5dd"
             bad = "#ffb4a8"
-            form_bg = "rgba(17, 29, 44, 0.62)"
-            form_border = "rgba(138, 168, 203, 0.20)"
+            shell_bg = "#0f1b2a"
+            shell_border = "#2a3d52"
+            form_border = "rgba(138, 168, 203, 0.22)"
             pane_bg = "transparent"
-            title_bg = "#0f1b2a"
+            input_bg = "#101c2b"
+            input_border = "#30445b"
+            input_focus_bg = "#122538"
             text_select_bg = "#3f6fb5"
             text_select_fg = "#edf4fd"
+            accent = "#59d5c0"
+            accent_hover = "#4bc4af"
+            accent_text = "#07251f"
+            ghost_bg = "rgba(137, 164, 196, 0.12)"
+            ghost_hover = "rgba(137, 164, 196, 0.20)"
             # Match legacy calm-tech palette used across the old UI.
             switch_bg = "#152437"
             switch_border = "#2f455d"
             tab_text = "#b7c8db"
-            tab_active_bg = "#2b4561"
-            tab_active_border = "#4f6f92"
-            tab_active_text = "#edf4fd"
+            tab_active_bg = "#59d5c0"
+            tab_active_border = "#75ead8"
+            tab_active_text = "#07251f"
         else:
+            text = "#182c41"
             muted = "#4f6074"
             ok = "#0e8169"
             bad = "#b83232"
-            form_bg = "rgba(236, 244, 252, 0.70)"
-            form_border = "rgba(95, 125, 165, 0.26)"
+            shell_bg = "#ffffff"
+            shell_border = "#c5d6e8"
+            form_border = "rgba(95, 125, 165, 0.24)"
             pane_bg = "transparent"
-            title_bg = "#eef5fc"
+            input_bg = "#ffffff"
+            input_border = "#bfd1e4"
+            input_focus_bg = "#f6fbff"
             text_select_bg = "#b9d2ec"
             text_select_fg = "#16324a"
+            accent = "#2f9f90"
+            accent_hover = "#278f82"
+            accent_text = "#ffffff"
+            ghost_bg = "rgba(86, 119, 156, 0.09)"
+            ghost_hover = "rgba(86, 119, 156, 0.15)"
             switch_bg = "#edf5fd"
             switch_border = "#bfd1e4"
             tab_text = "#4b647d"
-            tab_active_bg = "#d6e5f6"
-            tab_active_border = "#9db9d7"
-            tab_active_text = "#1f3a53"
+            tab_active_bg = "#2f9f90"
+            tab_active_border = "#258f81"
+            tab_active_text = "#ffffff"
 
         self.setStyleSheet(
             base
             + f"""
+            QFrame#authShell {{
+                background: {shell_bg};
+                border: 1px solid {shell_border};
+                border-radius: 14px;
+            }}
+
+            QFrame#authAccentLine {{
+                background: {accent};
+                border: none;
+                border-radius: 2px;
+            }}
+
+            QLabel#authBadge {{
+                color: {accent};
+                font-size: 12px;
+                font-weight: 800;
+            }}
+
+            QLabel#authPanelTitle {{
+                color: {text};
+                font-size: 28px;
+                font-weight: 800;
+            }}
+
             QTabWidget#authTabs {{
                 background: transparent;
             }}
@@ -313,35 +355,37 @@ class AuthDialog(QDialog):
                 padding: 0px;
             }}
 
-            QGroupBox {{
-                border-radius: 10px;
-                border: 1px solid {form_border};
-                background: {form_bg};
-                margin-top: 14px;
-                padding: 18px 16px 16px 16px;
+            QWidget#authGroup {{
+                border: none;
+                background: transparent;
             }}
 
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 12px;
-                top: -2px;
-                padding: 0 8px;
+            QWidget#authGroup QLabel {{
                 color: {muted};
-                background: {title_bg};
-                font-size: 13px;
+                font-size: 12px;
                 font-weight: 700;
             }}
 
-            QLineEdit {{
+            QLineEdit#authInput {{
+                background: {input_bg};
+                border: 1px solid {input_border};
+                border-radius: 10px;
+                color: {text};
+                padding: 8px 12px;
                 selection-background-color: {text_select_bg};
                 selection-color: {text_select_fg};
+                font-size: 14px;
+            }}
+
+            QLineEdit#authInput:focus {{
+                background: {input_focus_bg};
+                border-color: {accent};
             }}
 
             QLabel#authStatus {{
-                border-radius: 6px;
-                padding: 8px 10px;
-                background: transparent;
+                border-radius: 8px;
+                padding: 9px 11px;
+                background: {ghost_bg};
                 border: 1px solid {form_border};
                 color: {muted};
                 font-size: 12px;
@@ -353,6 +397,35 @@ class AuthDialog(QDialog):
 
             QLabel#authStatus[status="error"] {{
                 color: {bad};
+            }}
+
+            QPushButton#authPrimaryButton {{
+                background-color: {accent};
+                border: 1px solid {accent};
+                color: {accent_text};
+                border-radius: 10px;
+                padding: 9px 16px;
+                font-size: 14px;
+                font-weight: 800;
+            }}
+
+            QPushButton#authPrimaryButton:hover {{
+                background-color: {accent_hover};
+                border-color: {accent_hover};
+            }}
+
+            QPushButton#authGhostButton {{
+                background-color: {ghost_bg};
+                border: 1px solid {form_border};
+                color: {text};
+                border-radius: 10px;
+                padding: 9px 14px;
+                font-weight: 700;
+            }}
+
+            QPushButton#authGhostButton:hover {{
+                background-color: {ghost_hover};
+                border-color: {input_border};
             }}
             """
         )
@@ -369,22 +442,46 @@ class AuthDialog(QDialog):
 
     def _init_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(18, 18, 18, 18)
-        root.setSpacing(12)
+        root.setContentsMargins(24, 24, 24, 24)
+        root.setSpacing(0)
+        root.addStretch(1)
+
+        shell = QFrame()
+        shell.setObjectName("authShell")
+        shell.setMinimumWidth(460)
+        shell.setMaximumWidth(500)
+        root.addWidget(shell, 0, Qt.AlignmentFlag.AlignCenter)
+        root.addStretch(1)
+
+        shell_layout = QVBoxLayout(shell)
+        shell_layout.setContentsMargins(34, 32, 34, 30)
+        shell_layout.setSpacing(16)
+
+        badge = QLabel("FOCUSGUARDIAN")
+        badge.setObjectName("authBadge")
+        shell_layout.addWidget(badge)
+
+        accent_line = QFrame()
+        accent_line.setObjectName("authAccentLine")
+        accent_line.setFixedSize(46, 4)
+        shell_layout.addWidget(accent_line)
+
+        self.auth_panel_title = QLabel()
+        self.auth_panel_title.setObjectName("authPanelTitle")
+        self.auth_panel_title.setWordWrap(True)
+        shell_layout.addWidget(self.auth_panel_title)
 
         switcher_row = QHBoxLayout()
-        switcher_row.setContentsMargins(0, 0, 0, 0)
+        switcher_row.setContentsMargins(0, 2, 0, 0)
         switcher_row.setSpacing(0)
-        switcher_row.addStretch(1)
 
         self.auth_tab_bar = AnimatedAuthTabBar(self)
         self.auth_tab_bar.setObjectName("authTabsBar")
-        self.auth_tab_bar.setFixedWidth(380)
+        self.auth_tab_bar.setMinimumWidth(380)
         self.auth_tab_bar.addTab("Đăng nhập")
         self.auth_tab_bar.addTab("Đăng ký")
-        switcher_row.addWidget(self.auth_tab_bar, 0, Qt.AlignmentFlag.AlignCenter)
-        switcher_row.addStretch(1)
-        root.addLayout(switcher_row)
+        switcher_row.addWidget(self.auth_tab_bar, 1)
+        shell_layout.addLayout(switcher_row)
 
         self.tabs = QTabWidget()
         self.tabs.setObjectName("authTabs")
@@ -392,35 +489,34 @@ class AuthDialog(QDialog):
         self.tabs.setDocumentMode(False)
         self.tabs.addTab(self._build_login_tab(), "Đăng nhập")
         self.tabs.addTab(self._build_register_tab(), "Đăng ký")
-        root.addWidget(self.tabs, 1)
+        shell_layout.addWidget(self.tabs)
 
         self.form_status = QLabel("")
         self.form_status.setObjectName("authStatus")
         self.form_status.setWordWrap(True)
         self.form_status.setProperty("status", "info")
         self.form_status.hide()
-        root.addWidget(self.form_status)
+        shell_layout.addWidget(self.form_status)
 
         action_row = QHBoxLayout()
-        action_row.setContentsMargins(0, 0, 0, 0)
-        action_row.setSpacing(10)
+        action_row.setContentsMargins(0, 4, 0, 0)
+        action_row.setSpacing(12)
 
-        self.btn_close = QPushButton("Thoát ứng dụng")
-        self.btn_close.setObjectName("ghostButton")
-        self.btn_close.setMinimumHeight(38)
+        self.btn_close = QPushButton("Thoát")
+        self.btn_close.setObjectName("authGhostButton")
+        self.btn_close.setMinimumHeight(42)
+        self.btn_close.setMinimumWidth(96)
         self.btn_close.clicked.connect(self.reject)
         action_row.addWidget(self.btn_close)
 
-        action_row.addStretch(1)
-
         self.btn_submit = QPushButton("Đăng nhập")
-        self.btn_submit.setObjectName("primaryButton")
-        self.btn_submit.setMinimumHeight(38)
-        self.btn_submit.setMinimumWidth(140)
+        self.btn_submit.setObjectName("authPrimaryButton")
+        self.btn_submit.setMinimumHeight(42)
+        self.btn_submit.setDefault(True)
         self.btn_submit.clicked.connect(self._submit_current_tab)
-        action_row.addWidget(self.btn_submit)
+        action_row.addWidget(self.btn_submit, 1)
 
-        root.addLayout(action_row)
+        shell_layout.addLayout(action_row)
 
         # Keep external switcher and stacked tabs in sync.
         self.auth_tab_bar.currentChanged.connect(self.tabs.setCurrentIndex)
@@ -433,20 +529,32 @@ class AuthDialog(QDialog):
     def _build_login_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.setContentsMargins(0, 10, 0, 0)
+        layout.setContentsMargins(0, 8, 0, 0)
 
-        group = QGroupBox("Đăng nhập bằng username")
+        group = QWidget()
+        group.setObjectName("authGroup")
         form = QFormLayout(group)
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setHorizontalSpacing(0)
+        form.setVerticalSpacing(9)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
 
         self.login_username = QLineEdit()
-        self.login_username.setPlaceholderText("Tên đăng nhập đã đăng ký")
-        form.addRow("Username:", self.login_username)
+        self.login_username.setObjectName("authInput")
+        self.login_username.setMinimumHeight(42)
+        self.login_username.setClearButtonEnabled(True)
+        self.login_username.setPlaceholderText("Tên đăng nhập")
+        form.addRow("Username", self.login_username)
 
         self.login_password = QLineEdit()
+        self.login_password.setObjectName("authInput")
+        self.login_password.setMinimumHeight(42)
         self.login_password.setEchoMode(QLineEdit.EchoMode.Password)
         self.login_password.setPlaceholderText("Mật khẩu")
         self.login_password.returnPressed.connect(self._login)
-        form.addRow("Mật khẩu:", self.login_password)
+        form.addRow("Mật khẩu", self.login_password)
 
         layout.addWidget(group)
         layout.addStretch(1)
@@ -455,25 +563,39 @@ class AuthDialog(QDialog):
     def _build_register_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.setContentsMargins(0, 10, 0, 0)
+        layout.setContentsMargins(0, 8, 0, 0)
 
-        group = QGroupBox("Tạo tài khoản mới")
+        group = QWidget()
+        group.setObjectName("authGroup")
         form = QFormLayout(group)
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setHorizontalSpacing(0)
+        form.setVerticalSpacing(9)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
 
         self.register_username = QLineEdit()
+        self.register_username.setObjectName("authInput")
+        self.register_username.setMinimumHeight(42)
+        self.register_username.setClearButtonEnabled(True)
         self.register_username.setPlaceholderText("3-32 ký tự")
-        form.addRow("Username:", self.register_username)
+        form.addRow("Username", self.register_username)
 
         self.register_password = QLineEdit()
+        self.register_password.setObjectName("authInput")
+        self.register_password.setMinimumHeight(42)
         self.register_password.setEchoMode(QLineEdit.EchoMode.Password)
         self.register_password.setPlaceholderText("Tối thiểu 8 ký tự")
-        form.addRow("Mật khẩu:", self.register_password)
+        form.addRow("Mật khẩu", self.register_password)
 
         self.register_confirm_password = QLineEdit()
+        self.register_confirm_password.setObjectName("authInput")
+        self.register_confirm_password.setMinimumHeight(42)
         self.register_confirm_password.setEchoMode(QLineEdit.EchoMode.Password)
         self.register_confirm_password.setPlaceholderText("Nhập lại mật khẩu")
         self.register_confirm_password.returnPressed.connect(self._register)
-        form.addRow("Xác nhận:", self.register_confirm_password)
+        form.addRow("Xác nhận", self.register_confirm_password)
 
         layout.addWidget(group)
         layout.addStretch(1)
@@ -502,7 +624,13 @@ class AuthDialog(QDialog):
 
     @pyqtSlot(int)
     def _update_submit_text(self, index: int) -> None:
-        self.btn_submit.setText("Đăng nhập" if index == 0 else "Tạo tài khoản")
+        is_login = index == 0
+        self.btn_submit.setText("Đăng nhập" if is_login else "Tạo tài khoản")
+
+        if hasattr(self, "auth_panel_title"):
+            self.auth_panel_title.setText("Chào mừng quay lại" if is_login else "Tạo tài khoản mới")
+        if hasattr(self, "form_status"):
+            self.form_status.hide()
 
     @pyqtSlot()
     def _login(self) -> None:

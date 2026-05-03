@@ -70,6 +70,9 @@ class ZaloAlertManager:
         self._active_state: Optional[FocusState] = None
         self._active_state_started_at: float = 0.0
         self._sent_keys_in_active_streak: Set[str] = set()
+        self._last_wait_log_second: int = -1
+        self._last_cooldown_log_key: str = ""
+        self._last_disabled_log_at: float = 0.0
 
         self._last_global_alert_at: float = 0.0
         self._last_alert_at_by_key: Dict[str, float] = {}
@@ -85,20 +88,33 @@ class ZaloAlertManager:
         self._profile_name = str(self._config.get("profile_name", "default") or "").strip() or "default"
 
         self._enabled = bool(self._config.get("enable_zalo_alerts", False))
-        legacy_threshold = float(self._config.get("zalo_alert_threshold_seconds", 1.2) or 1.2)
-        self._threshold_seconds = max(
-            0.6,
-            float(self._config.get("zalo_distraction_confirm_seconds", legacy_threshold) or legacy_threshold),
-        )
-        legacy_cooldown_minutes = float(self._config.get("zalo_alert_cooldown_minutes", 0.0) or 0.0)
+
+        legacy_threshold = self._safe_float(self._config.get("zalo_alert_threshold_seconds"), 5.0)
+        explicit_threshold = self._config.get("zalo_distraction_confirm_seconds")
+        if explicit_threshold is None:
+            # Older profile defaults used 45s, which made "realtime" Zalo testing
+            # look broken for short drowsy/away episodes. Keep explicit new values,
+            # but migrate the hidden legacy default to a short confirmation window.
+            confirm_seconds = 5.0 if legacy_threshold >= 30.0 else legacy_threshold
+        else:
+            confirm_seconds = self._safe_float(explicit_threshold, legacy_threshold)
+        self._threshold_seconds = max(0.6, float(confirm_seconds))
+
+        legacy_cooldown_minutes = self._safe_float(self._config.get("zalo_alert_cooldown_minutes"), 0.0)
         legacy_cooldown_seconds = legacy_cooldown_minutes * 60.0 if legacy_cooldown_minutes > 0 else 120.0
+        if "zalo_state_cooldown_seconds" in self._config:
+            state_cooldown_seconds = self._safe_float(self._config.get("zalo_state_cooldown_seconds"), 0.0)
+        elif "zalo_alert_cooldown_minutes" in self._config:
+            state_cooldown_seconds = max(0.0, legacy_cooldown_minutes * 60.0)
+        else:
+            state_cooldown_seconds = 0.0
         self._state_cooldown_seconds = max(
             0.0,
-            float(self._config.get("zalo_state_cooldown_seconds", 0.0) or 0.0),
+            state_cooldown_seconds,
         )
         self._break_cooldown_seconds = max(
             0.0,
-            float(self._config.get("zalo_break_cooldown_seconds", legacy_cooldown_seconds) or legacy_cooldown_seconds),
+            self._safe_float(self._config.get("zalo_break_cooldown_seconds"), legacy_cooldown_seconds),
         )
 
         self._alert_on_distraction = bool(self._config.get("zalo_alert_on_distraction", True))
@@ -108,6 +124,14 @@ class ZaloAlertManager:
         self._alert_on_break_reminder = bool(self._config.get("zalo_alert_on_break_reminder", True))
 
         self.client.update_config(ZaloBotConfig.from_app_config(self._config))
+        chat_id_present = bool(str(self._config.get("zalo_chat_id", "") or "").strip())
+        logger.debug(
+            "Zalo alerts configured: enabled=%s chat_id=%s confirm=%.1fs state_cooldown=%.1fs",
+            self._enabled,
+            "set" if chat_id_present else "missing",
+            self._threshold_seconds,
+            self._state_cooldown_seconds,
+        )
 
     def reset_session(self) -> None:
         """Reset streak/debounce state at the beginning of a tracking session."""
@@ -143,6 +167,9 @@ class ZaloAlertManager:
         now = float(timestamp if timestamp is not None else time.time())
 
         if not self._enabled or in_warmup:
+            if not self._enabled and (now - self._last_disabled_log_at) >= 30.0:
+                logger.debug("Zalo state alert skipped: alerts disabled")
+                self._last_disabled_log_at = now
             return None
 
         if state in self.FOCUSED_STATES:
@@ -161,17 +188,49 @@ class ZaloAlertManager:
             self._active_state = state
             self._active_state_started_at = now
             self._sent_keys_in_active_streak.clear()
+            self._last_wait_log_second = -1
+            self._last_cooldown_log_key = ""
+            logger.debug(
+                "Zalo alert episode started: state=%s confirm=%.1fs score=%.1f confidence=%.0f%%",
+                state.name,
+                self._threshold_seconds,
+                max(0.0, min(100.0, float(score or 0.0))),
+                max(0.0, min(100.0, float(confidence or 0.0) * 100.0)),
+            )
 
         active_duration = max(0.0, now - self._active_state_started_at)
         if active_duration < self._threshold_seconds:
+            wait_second = int(active_duration)
+            if wait_second != self._last_wait_log_second:
+                self._last_wait_log_second = wait_second
+                logger.debug(
+                    "Zalo alert waiting: state=%s duration=%.1fs/%.1fs",
+                    state.name,
+                    active_duration,
+                    self._threshold_seconds,
+                )
             return None
 
         alert_key = self._resolve_alert_key_for_state(state)
         if not alert_key:
+            logger.debug("Zalo state alert skipped: state %s disabled by alert channel settings", state.name)
+            return None
+
+        cooldown_remaining = self._cooldown_remaining_seconds(alert_key, now)
+        if cooldown_remaining > 0:
+            cooldown_log_key = f"{alert_key}:{int(cooldown_remaining // 10)}"
+            if cooldown_log_key != self._last_cooldown_log_key:
+                self._last_cooldown_log_key = cooldown_log_key
+                logger.debug(
+                    "Zalo state alert skipped: cooldown %.0fs remaining for %s",
+                    cooldown_remaining,
+                    alert_key,
+                )
             return None
 
         # Exactly one alert per non-focused episode; send again only after focused recovery.
         if self._sent_keys_in_active_streak and not self._recovered_since_last_alert:
+            logger.debug("Zalo state alert skipped: already sent for current non-focused episode")
             return None
 
         message = self._format_alert_message(
@@ -184,6 +243,7 @@ class ZaloAlertManager:
             timestamp=now,
         )
 
+        logger.debug("Sending Zalo state alert: key=%s state=%s duration=%.1fs", alert_key, state.name, active_duration)
         success, detail, _ = self.client.send_message(None, message)
 
         # Treat send attempt as consumed so failed network does not spam every frame.
@@ -191,6 +251,8 @@ class ZaloAlertManager:
 
         if not success:
             logger.warning("Zalo state alert failed (%s): %s", alert_key, detail)
+        else:
+            logger.debug("Zalo state alert sent successfully: %s", alert_key)
 
         return ZaloAlertEvent(
             alert_key=alert_key,
@@ -271,6 +333,9 @@ class ZaloAlertManager:
         return None
 
     def _is_cooldown_ready(self, alert_key: str, now: float) -> bool:
+        return self._cooldown_remaining_seconds(alert_key, now) <= 0.0
+
+    def _cooldown_remaining_seconds(self, alert_key: str, now: float) -> float:
         cooldown_seconds = (
             self._break_cooldown_seconds
             if alert_key == "break_reminder"
@@ -278,13 +343,15 @@ class ZaloAlertManager:
         )
 
         if cooldown_seconds <= 0:
-            return True
+            return 0.0
 
         if (now - self._last_global_alert_at) < cooldown_seconds:
-            return False
+            return max(0.0, cooldown_seconds - (now - self._last_global_alert_at))
 
         last_key_at = self._last_alert_at_by_key.get(alert_key, 0.0)
-        return (now - last_key_at) >= cooldown_seconds
+        if (now - last_key_at) < cooldown_seconds:
+            return max(0.0, cooldown_seconds - (now - last_key_at))
+        return 0.0
 
     def _mark_alert_attempt(self, alert_key: str, timestamp: float) -> None:
         self._sent_keys_in_active_streak.add(alert_key)
@@ -307,7 +374,7 @@ class ZaloAlertManager:
         time_text = time.strftime("%H:%M:%S %d/%m/%Y", time.localtime(timestamp))
         duration_text = self._format_duration(active_duration)
         safe_score = max(0.0, min(100.0, float(score or 0.0)))
-        safe_conf = max(0.0, min(1.0, float(confidence or 0.0)))
+        _ = confidence
 
         base_map = {
             "distraction": "FocusGuardian: Phát hiện bạn đang mất tập trung.",
@@ -318,19 +385,15 @@ class ZaloAlertManager:
 
         headline = base_map.get(alert_key, "FocusGuardian: Phát hiện trạng thái cần chú ý.")
 
-        recommendation_text = self._short_recommendation(recommendation)
         reason_text = str(reason or "").strip()
 
         lines = [
             headline,
             f"Hồ sơ: {profile}",
             f"Thời gian trạng thái: {duration_text}",
-            f"Điểm hiện tại: {safe_score:.0f} | Độ tin cậy: {safe_conf:.0%}",
+            f"Điểm hiện tại: {safe_score:.0f}",
             f"Thời điểm: {time_text}",
         ]
-
-        if recommendation_text:
-            lines.append(f"Gợi ý: {recommendation_text}")
 
         if reason_text:
             lines.append(f"Chi tiết: {reason_text[:120]}")
@@ -375,6 +438,8 @@ class ZaloAlertManager:
             return ""
 
         reason = str(recommendation.get("reason", "") or "").strip()
+        if reason.lower().startswith("personalized:"):
+            return ""
         if reason:
             return reason[:120]
 
@@ -387,3 +452,10 @@ class ZaloAlertManager:
             pass
 
         return ""
+
+    @staticmethod
+    def _safe_float(value: Any, fallback: float) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float(fallback)

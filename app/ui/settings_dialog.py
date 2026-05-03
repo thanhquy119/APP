@@ -13,14 +13,17 @@ from PyQt6.QtWidgets import (
     QAbstractSpinBox,
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QDialog,
     QFrame,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QLineEdit,
     QLabel,
     QListView,
     QPushButton,
+    QScrollArea,
     QSlider,
     QSpinBox,
     QTabWidget,
@@ -41,6 +44,7 @@ from ..logic.zalo_bot import (
     ZaloBotClient,
     ZaloBotConfig,
 )
+from ..logic.task_context import TaskContextMonitor
 
 logger = logging.getLogger(__name__)
 ZALO_CONNECT_SUCCESS_TEXT = (
@@ -309,6 +313,7 @@ class SettingsDialog(QDialog):
         self._chat_id_fetch_thread: Optional[QThread] = None
         self._chat_id_fetch_worker: Optional[_ZaloChatIdFetchWorker] = None
         self._zalo_guide_dialog: Optional[_ZaloQrGuideDialog] = None
+        self._task_context_monitor = TaskContextMonitor()
         self._is_fetching_chat_id = False
         try:
             committed_volume = int(float(self.config.get("focus_audio_volume", DEFAULT_FOCUS_AUDIO_VOLUME)))
@@ -322,7 +327,10 @@ class SettingsDialog(QDialog):
 
         self.setWindowTitle("Cài đặt")
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
-        self.setMinimumSize(560, 460)
+        # Keep Settings compact; longer content scrolls inside tabs.
+        self.setMinimumSize(560, 420)
+        self.resize(680, 560)
+        self.setMaximumHeight(720)
 
         self._apply_theme(self._theme_mode == "dark")
         self._init_ui()
@@ -392,6 +400,35 @@ class SettingsDialog(QDialog):
                 border: 1px solid {border};
                 border-radius: 0px;
                 background: {pane_bg};
+            }}
+            QScrollArea {{
+                border: none;
+                background: transparent;
+            }}
+            QScrollArea > QWidget > QWidget {{
+                background: transparent;
+            }}
+            QScrollBar:vertical {{
+                background: transparent;
+                width: 8px;
+                margin: 4px 2px 4px 2px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: rgba(130, 152, 176, 0.45);
+                border-radius: 4px;
+                min-height: 28px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: rgba(130, 152, 176, 0.70);
+            }}
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {{
+                height: 0px;
+                background: transparent;
+            }}
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {{
+                background: transparent;
             }}
             QLabel#sectionHint {{
                 color: {muted};
@@ -542,15 +579,30 @@ class SettingsDialog(QDialog):
         if hasattr(self, "focus_audio_track_combo"):
             self.focus_audio_track_combo.set_theme_mode(is_dark)
 
+    def _wrap_tab_scroll(self, content: QWidget) -> QScrollArea:
+        """Wrap a settings tab so the Settings dialog stays compact."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setWidget(content)
+        return scroll
+
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._create_appearance_tab(), "Chung")
-        self.tabs.addTab(self._create_zalo_tab(), "Thông báo")
-        layout.addWidget(self.tabs)
+        # Task context is now configured automatically by app defaults.
+        # Keep the hidden controls alive only for config compatibility, but do not show this tab to users.
+        self._hidden_task_context_tab = self._create_task_context_tab()
+        self._hidden_task_context_tab.hide()
+
+        self.tabs.addTab(self._wrap_tab_scroll(self._create_appearance_tab()), "Chung")
+        self.tabs.addTab(self._wrap_tab_scroll(self._create_zalo_tab()), "Thông báo")
+        layout.addWidget(self.tabs, 1)
 
         footer_layout = QHBoxLayout()
         footer_layout.setContentsMargins(0, 4, 0, 0)
@@ -659,9 +711,145 @@ class SettingsDialog(QDialog):
         audio_form.addRow("", self.focus_audio_status_label)
 
 
+        root.setAlignment(Qt.AlignmentFlag.AlignTop)
         root.addWidget(group)
         root.addWidget(audio_group)
-        root.addStretch(1)
+        return widget
+
+    def _create_task_context_tab(self) -> QWidget:
+        widget = QWidget()
+        root = QVBoxLayout(widget)
+
+        monitor_group = QGroupBox("Nhận diện bối cảnh làm việc số")
+        monitor_form = QFormLayout(monitor_group)
+
+        self.enable_task_context_monitoring = QCheckBox(
+            "Bật theo dõi ứng dụng/cửa sổ đang hoạt động (không lưu tiêu đề thô)"
+        )
+        monitor_form.addRow(self.enable_task_context_monitoring)
+
+        self.task_context_sample_interval_spin = QDoubleSpinBox()
+        self.task_context_sample_interval_spin.setRange(2.0, 30.0)
+        self.task_context_sample_interval_spin.setSingleStep(0.5)
+        self.task_context_sample_interval_spin.setDecimals(1)
+        self.task_context_sample_interval_spin.setSuffix(" giây")
+        monitor_form.addRow("Chu kỳ lấy mẫu:", self.task_context_sample_interval_spin)
+
+        self.task_context_lookback_minutes_spin = QSpinBox()
+        self.task_context_lookback_minutes_spin.setRange(1, 60)
+        self.task_context_lookback_minutes_spin.setSuffix(" phút")
+        monitor_form.addRow("Cửa sổ phân tích:", self.task_context_lookback_minutes_spin)
+
+        self.task_context_task_keywords_edit = QLineEdit()
+        self.task_context_task_keywords_edit.setPlaceholderText("code,study,research,docs")
+        monitor_form.addRow("Từ khóa task-related:", self.task_context_task_keywords_edit)
+
+        self.task_context_distracting_keywords_edit = QLineEdit()
+        self.task_context_distracting_keywords_edit.setPlaceholderText("youtube,facebook,tiktok")
+        monitor_form.addRow("Từ khóa dễ xao nhãng:", self.task_context_distracting_keywords_edit)
+
+        self.task_context_neutral_keywords_edit = QLineEdit()
+        self.task_context_neutral_keywords_edit.setPlaceholderText("explorer,settings,file")
+        monitor_form.addRow("Từ khóa trung tính:", self.task_context_neutral_keywords_edit)
+
+        self.task_context_task_apps_edit = QLineEdit()
+        self.task_context_task_apps_edit.setPlaceholderText("code.exe,notion.exe")
+        monitor_form.addRow("Danh sách app tập trung:", self.task_context_task_apps_edit)
+
+        app_row = QHBoxLayout()
+        app_row.setContentsMargins(0, 0, 0, 0)
+        app_row.setSpacing(8)
+
+        self.task_context_add_current_app_btn = QPushButton("Thêm app đang mở")
+        self.task_context_add_current_app_btn.setObjectName("ghostButton")
+        app_row.addWidget(self.task_context_add_current_app_btn)
+
+        app_row.addStretch(1)
+        monitor_form.addRow("", app_row)
+
+        self.task_context_distracting_apps_edit = QLineEdit()
+        self.task_context_distracting_apps_edit.setPlaceholderText("steam.exe,discord.exe")
+        monitor_form.addRow("Danh sách app xao nhãng:", self.task_context_distracting_apps_edit)
+
+        self.task_context_excluded_keywords_edit = QLineEdit()
+        self.task_context_excluded_keywords_edit.setPlaceholderText("focusguardian,notification")
+        monitor_form.addRow("Từ khóa loại trừ:", self.task_context_excluded_keywords_edit)
+
+        self.task_context_excluded_apps_edit = QLineEdit()
+        self.task_context_excluded_apps_edit.setPlaceholderText("focusguardian.exe")
+        monitor_form.addRow("App loại trừ:", self.task_context_excluded_apps_edit)
+
+        self.task_context_status_label = QLabel("Theo dõi theo nguyên tắc privacy-first, chỉ dùng metadata.")
+        self.task_context_status_label.setObjectName("statusInfo")
+        self.task_context_status_label.setWordWrap(True)
+        monitor_form.addRow("", self.task_context_status_label)
+
+        behavior_group = QGroupBox("Check-in, deadline mode và recovery")
+        behavior_form = QFormLayout(behavior_group)
+
+        self.task_context_checkin_enabled = QCheckBox("Bật check-in nhẹ khi rủi ro tăng")
+        behavior_form.addRow(self.task_context_checkin_enabled)
+
+        self.task_context_checkin_interval_spin = QSpinBox()
+        self.task_context_checkin_interval_spin.setRange(2, 60)
+        self.task_context_checkin_interval_spin.setSuffix(" phút")
+        behavior_form.addRow("Nhịp check-in:", self.task_context_checkin_interval_spin)
+
+        self.task_context_checkin_cooldown_spin = QSpinBox()
+        self.task_context_checkin_cooldown_spin.setRange(1, 60)
+        self.task_context_checkin_cooldown_spin.setSuffix(" phút")
+        behavior_form.addRow("Cooldown check-in:", self.task_context_checkin_cooldown_spin)
+
+        self.task_context_checkin_threshold_spin = QDoubleSpinBox()
+        self.task_context_checkin_threshold_spin.setRange(0.2, 0.98)
+        self.task_context_checkin_threshold_spin.setDecimals(2)
+        self.task_context_checkin_threshold_spin.setSingleStep(0.02)
+        behavior_form.addRow("Ngưỡng rủi ro check-in:", self.task_context_checkin_threshold_spin)
+
+        self.task_context_checkin_max_per_hour_spin = QSpinBox()
+        self.task_context_checkin_max_per_hour_spin.setRange(1, 12)
+        self.task_context_checkin_max_per_hour_spin.setSuffix(" lần/giờ")
+        behavior_form.addRow("Giới hạn check-in:", self.task_context_checkin_max_per_hour_spin)
+
+        self.deadline_mode_enabled = QCheckBox("Bật deadline mode mặc định")
+        behavior_form.addRow(self.deadline_mode_enabled)
+
+        self.deadline_focus_minutes_spin = QSpinBox()
+        self.deadline_focus_minutes_spin.setRange(10, 180)
+        self.deadline_focus_minutes_spin.setSuffix(" phút")
+        behavior_form.addRow("Khung deadline mặc định:", self.deadline_focus_minutes_spin)
+
+        self.recovery_validation_delay_spin = QSpinBox()
+        self.recovery_validation_delay_spin.setRange(30, 600)
+        self.recovery_validation_delay_spin.setSuffix(" giây")
+        behavior_form.addRow("Độ trễ đo hồi phục sau nghỉ:", self.recovery_validation_delay_spin)
+
+        self.recovery_focus_delta_spin = QDoubleSpinBox()
+        self.recovery_focus_delta_spin.setRange(0.0, 30.0)
+        self.recovery_focus_delta_spin.setDecimals(1)
+        self.recovery_focus_delta_spin.setSingleStep(0.5)
+        behavior_form.addRow("Mức tăng điểm tối thiểu:", self.recovery_focus_delta_spin)
+
+        self.session_goal_prompt_enabled = QCheckBox("Hỏi mục tiêu trước khi bắt đầu phiên")
+        behavior_form.addRow(self.session_goal_prompt_enabled)
+
+        self.session_exit_feedback_enabled = QCheckBox("Hỏi lý do khi kết thúc phiên")
+        behavior_form.addRow(self.session_exit_feedback_enabled)
+
+        self.session_report_show_on_stop = QCheckBox("Hiển thị báo cáo ngắn sau mỗi phiên")
+        behavior_form.addRow(self.session_report_show_on_stop)
+
+        hint = QLabel(
+            "Gợi ý: dùng app list cho độ chính xác cao hơn keyword. "
+            "Các check-in chỉ xuất hiện khi rủi ro cao và có cooldown."
+        )
+        hint.setObjectName("sectionHint")
+        hint.setWordWrap(True)
+        behavior_form.addRow("", hint)
+
+        root.setAlignment(Qt.AlignmentFlag.AlignTop)
+        root.addWidget(monitor_group)
+        root.addWidget(behavior_group)
         return widget
 
     def _create_zalo_tab(self) -> QWidget:
@@ -673,6 +861,19 @@ class SettingsDialog(QDialog):
 
         self.enable_zalo_alerts = QCheckBox("Bật cảnh báo realtime qua Zalo Bot")
         form.addRow(self.enable_zalo_alerts)
+
+        self.zalo_confirm_seconds_spin = QSpinBox()
+        self.zalo_confirm_seconds_spin.setRange(1, 120)
+        self.zalo_confirm_seconds_spin.setSuffix(" giây")
+        self.zalo_confirm_seconds_spin.setToolTip("Số giây trạng thái xấu cần kéo dài trước khi gửi cảnh báo Zalo.")
+        form.addRow("Gửi sau khi kéo dài:", self.zalo_confirm_seconds_spin)
+
+        self.zalo_cooldown_minutes_spin = QSpinBox()
+        self.zalo_cooldown_minutes_spin.setRange(0, 60)
+        self.zalo_cooldown_minutes_spin.setSuffix(" phút")
+        self.zalo_cooldown_minutes_spin.setSpecialValueText("Không cooldown")
+        self.zalo_cooldown_minutes_spin.setToolTip("Khoảng nghỉ tối thiểu giữa hai cảnh báo Zalo sau khi đã phục hồi.")
+        form.addRow("Cooldown cảnh báo:", self.zalo_cooldown_minutes_spin)
 
         action_row = QHBoxLayout()
         self.zalo_connect_bot_btn = QPushButton("Kết nối với Zalo Bot")
@@ -694,8 +895,8 @@ class SettingsDialog(QDialog):
         self.zalo_status_label.setWordWrap(True)
         form.addRow("", self.zalo_status_label)
 
+        root.setAlignment(Qt.AlignmentFlag.AlignTop)
         root.addWidget(group)
-        root.addStretch(1)
         return widget
 
     def _connect_interactions(self) -> None:
@@ -705,6 +906,11 @@ class SettingsDialog(QDialog):
         self.focus_audio_volume_spin.valueChanged.connect(self._on_focus_audio_volume_spin_changed)
         self.focus_audio_preview_btn.clicked.connect(self._preview_focus_audio)
         self.focus_audio_stop_btn.clicked.connect(self._stop_focus_audio)
+
+        self.enable_task_context_monitoring.toggled.connect(self._sync_control_states)
+        self.task_context_checkin_enabled.toggled.connect(self._sync_control_states)
+        self.deadline_mode_enabled.toggled.connect(self._sync_control_states)
+        self.task_context_add_current_app_btn.clicked.connect(self._add_current_task_app)
 
         self.enable_zalo_alerts.toggled.connect(self._sync_control_states)
 
@@ -719,6 +925,63 @@ class SettingsDialog(QDialog):
         self.focus_audio_status_label.setText(text)
         self.focus_audio_status_label.style().unpolish(self.focus_audio_status_label)
         self.focus_audio_status_label.style().polish(self.focus_audio_status_label)
+
+    def _set_task_context_status(self, text: str, level: str = "info") -> None:
+        if level == "ok":
+            self.task_context_status_label.setObjectName("statusOk")
+        elif level == "error":
+            self.task_context_status_label.setObjectName("statusError")
+        else:
+            self.task_context_status_label.setObjectName("statusInfo")
+
+        self.task_context_status_label.setText(text)
+        self.task_context_status_label.style().unpolish(self.task_context_status_label)
+        self.task_context_status_label.style().polish(self.task_context_status_label)
+
+    @staticmethod
+    def _normalize_csv_value(raw: Any) -> str:
+        values: list[str] = []
+        if isinstance(raw, (list, tuple, set)):
+            for item in raw:
+                token = str(item or "").strip().lower()
+                if token:
+                    values.append(token)
+        else:
+            text = str(raw or "").replace("\n", ",").replace(";", ",")
+            for item in text.split(","):
+                token = item.strip().lower()
+                if token:
+                    values.append(token)
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for token in values:
+            if token in seen:
+                continue
+            seen.add(token)
+            deduped.append(token)
+        return ", ".join(deduped)
+
+    @staticmethod
+    def _append_csv_token(current_text: str, token: str) -> str:
+        normalized = SettingsDialog._normalize_csv_value(current_text)
+        values = [item.strip().lower() for item in normalized.split(",") if item.strip()]
+        clean_token = str(token or "").strip().lower()
+        if clean_token and clean_token not in values:
+            values.append(clean_token)
+        return ", ".join(values)
+
+    @pyqtSlot()
+    def _add_current_task_app(self) -> None:
+        sample = self._task_context_monitor.get_active_context()
+        app_id = str(sample.app_id or "").strip().lower()
+        if not app_id or app_id == "unknown":
+            self._set_task_context_status("Không lấy được app foreground. Hãy thử lại.", level="error")
+            return
+
+        merged = self._append_csv_token(self.task_context_task_apps_edit.text(), app_id)
+        self.task_context_task_apps_edit.setText(merged)
+        self._set_task_context_status(f"Đã thêm '{app_id}' vào danh sách app tập trung.", level="ok")
 
     def _audio_manager_ready(self) -> bool:
         return self.focus_audio_manager is not None and self.focus_audio_manager.is_available()
@@ -839,11 +1102,50 @@ class SettingsDialog(QDialog):
         if not audio_ready:
             self._set_audio_status("Backend audio không khả dụng trong môi trường hiện tại.", level="error")
 
+        context_enabled = self.enable_task_context_monitoring.isChecked()
+        context_inputs = (
+            self.task_context_sample_interval_spin,
+            self.task_context_lookback_minutes_spin,
+            self.task_context_task_keywords_edit,
+            self.task_context_distracting_keywords_edit,
+            self.task_context_neutral_keywords_edit,
+            self.task_context_task_apps_edit,
+            self.task_context_distracting_apps_edit,
+            self.task_context_excluded_keywords_edit,
+            self.task_context_excluded_apps_edit,
+            self.task_context_checkin_enabled,
+            self.deadline_mode_enabled,
+            self.recovery_validation_delay_spin,
+            self.recovery_focus_delta_spin,
+            self.session_goal_prompt_enabled,
+            self.session_exit_feedback_enabled,
+            self.session_report_show_on_stop,
+        )
+        for control in context_inputs:
+            control.setEnabled(context_enabled)
+        self.task_context_add_current_app_btn.setEnabled(context_enabled)
+
+        checkin_enabled = context_enabled and self.task_context_checkin_enabled.isChecked()
+        self.task_context_checkin_interval_spin.setEnabled(checkin_enabled)
+        self.task_context_checkin_cooldown_spin.setEnabled(checkin_enabled)
+        self.task_context_checkin_threshold_spin.setEnabled(checkin_enabled)
+        self.task_context_checkin_max_per_hour_spin.setEnabled(checkin_enabled)
+
+        deadline_enabled = context_enabled and self.deadline_mode_enabled.isChecked()
+        self.deadline_focus_minutes_spin.setEnabled(deadline_enabled)
+
+        if context_enabled:
+            self._set_task_context_status("Đang theo dõi theo hướng privacy-first (metadata-only).", level="info")
+        else:
+            self._set_task_context_status("Theo dõi bối cảnh đang tắt.", level="info")
+
         zalo_enabled = self.enable_zalo_alerts.isChecked()
         has_chat_id = bool(str(self.config.get("zalo_chat_id", "") or "").strip())
         can_connect = zalo_enabled and not self._is_fetching_chat_id
         can_test = zalo_enabled and has_chat_id and not self._is_fetching_chat_id
 
+        self.zalo_confirm_seconds_spin.setEnabled(zalo_enabled)
+        self.zalo_cooldown_minutes_spin.setEnabled(zalo_enabled)
         self.zalo_connect_bot_btn.setEnabled(can_connect)
         self.zalo_test_message_btn.setEnabled(can_test)
 
@@ -894,6 +1196,10 @@ class SettingsDialog(QDialog):
             "zalo_bot_token": FIXED_ZALO_BOT_TOKEN,
             "zalo_chat_id": resolved_chat_id,
             "zalo_webhook_secret": str(self.config.get("zalo_webhook_secret", "") or ""),
+            "zalo_alert_threshold_seconds": int(self.zalo_confirm_seconds_spin.value()),
+            "zalo_distraction_confirm_seconds": int(self.zalo_confirm_seconds_spin.value()),
+            "zalo_alert_cooldown_minutes": int(self.zalo_cooldown_minutes_spin.value()),
+            "zalo_state_cooldown_seconds": int(self.zalo_cooldown_minutes_spin.value()) * 60,
             "zalo_alert_on_distraction": bool(self.config.get("zalo_alert_on_distraction", True)),
             "zalo_alert_on_drowsy": bool(self.config.get("zalo_alert_on_drowsy", True)),
             "zalo_alert_on_phone": bool(self.config.get("zalo_alert_on_phone", True)),
@@ -928,6 +1234,7 @@ class SettingsDialog(QDialog):
         success, detail, _ = client.send_message(config.get("zalo_chat_id"), test_text)
 
         if success:
+            self.config_applied.emit(dict(config))
             NoticeDialog.info(
                 self,
                 "Zalo Alerts",
@@ -1016,12 +1323,7 @@ class SettingsDialog(QDialog):
             client = ZaloBotClient(ZaloBotConfig.from_app_config(client_config))
             sent_ok, sent_detail, _ = client.send_message(self.config.get("zalo_chat_id"), ZALO_CONNECT_SUCCESS_TEXT)
 
-            self.config_applied.emit(
-                {
-                    "zalo_bot_token": FIXED_ZALO_BOT_TOKEN,
-                    "zalo_chat_id": self.config.get("zalo_chat_id", ""),
-                }
-            )
+            self.config_applied.emit(dict(client_config))
 
             if sent_ok:
                 self._set_zalo_status(
@@ -1068,6 +1370,113 @@ class SettingsDialog(QDialog):
         else:
             self._set_audio_status("Âm thanh nền đang tắt.", level="info")
 
+        self.enable_task_context_monitoring.setChecked(bool(self.config.get("enable_task_context_monitoring", True)))
+        self.task_context_checkin_enabled.setChecked(bool(self.config.get("task_context_checkin_enabled", True)))
+        self.deadline_mode_enabled.setChecked(bool(self.config.get("deadline_mode_enabled", False)))
+        self.session_goal_prompt_enabled.setChecked(bool(self.config.get("session_goal_prompt_enabled", True)))
+        self.session_exit_feedback_enabled.setChecked(bool(self.config.get("session_exit_feedback_enabled", True)))
+        self.session_report_show_on_stop.setChecked(bool(self.config.get("session_report_show_on_stop", True)))
+
+        try:
+            sample_interval = float(self.config.get("task_context_sample_interval_seconds", 5.0) or 5.0)
+        except (TypeError, ValueError):
+            sample_interval = 5.0
+        self.task_context_sample_interval_spin.setValue(max(2.0, min(30.0, sample_interval)))
+
+        try:
+            lookback_minutes = int(float(self.config.get("task_context_lookback_minutes", 5.0) or 5.0))
+        except (TypeError, ValueError):
+            lookback_minutes = 5
+        self.task_context_lookback_minutes_spin.setValue(max(1, min(60, lookback_minutes)))
+
+        self.task_context_task_keywords_edit.setText(
+            self._normalize_csv_value(self.config.get("task_context_task_keywords", ""))
+        )
+        self.task_context_distracting_keywords_edit.setText(
+            self._normalize_csv_value(self.config.get("task_context_distracting_keywords", ""))
+        )
+        self.task_context_neutral_keywords_edit.setText(
+            self._normalize_csv_value(self.config.get("task_context_neutral_keywords", ""))
+        )
+        self.task_context_task_apps_edit.setText(
+            self._normalize_csv_value(self.config.get("task_context_task_apps", ""))
+        )
+        self.task_context_distracting_apps_edit.setText(
+            self._normalize_csv_value(self.config.get("task_context_distracting_apps", ""))
+        )
+        self.task_context_excluded_keywords_edit.setText(
+            self._normalize_csv_value(self.config.get("task_context_excluded_keywords", ""))
+        )
+        self.task_context_excluded_apps_edit.setText(
+            self._normalize_csv_value(self.config.get("task_context_excluded_apps", ""))
+        )
+
+        try:
+            checkin_interval = int(float(self.config.get("task_context_checkin_interval_minutes", 12) or 12))
+        except (TypeError, ValueError):
+            checkin_interval = 12
+        self.task_context_checkin_interval_spin.setValue(max(2, min(60, checkin_interval)))
+
+        try:
+            checkin_cooldown = int(float(self.config.get("task_context_checkin_cooldown_minutes", 8) or 8))
+        except (TypeError, ValueError):
+            checkin_cooldown = 8
+        self.task_context_checkin_cooldown_spin.setValue(max(1, min(60, checkin_cooldown)))
+
+        try:
+            checkin_threshold = float(self.config.get("task_context_checkin_risk_threshold", 0.72) or 0.72)
+        except (TypeError, ValueError):
+            checkin_threshold = 0.72
+        self.task_context_checkin_threshold_spin.setValue(max(0.2, min(0.98, checkin_threshold)))
+
+        try:
+            checkin_max_per_hour = int(float(self.config.get("task_context_checkin_max_per_hour", 3) or 3))
+        except (TypeError, ValueError):
+            checkin_max_per_hour = 3
+        self.task_context_checkin_max_per_hour_spin.setValue(max(1, min(12, checkin_max_per_hour)))
+
+        try:
+            deadline_minutes = int(float(self.config.get("deadline_focus_minutes", 45) or 45))
+        except (TypeError, ValueError):
+            deadline_minutes = 45
+        self.deadline_focus_minutes_spin.setValue(max(10, min(180, deadline_minutes)))
+
+        try:
+            recovery_delay = int(float(self.config.get("recovery_validation_delay_seconds", 90) or 90))
+        except (TypeError, ValueError):
+            recovery_delay = 90
+        self.recovery_validation_delay_spin.setValue(max(30, min(600, recovery_delay)))
+
+        try:
+            recovery_delta = float(self.config.get("recovery_focus_delta_min", 6.0) or 6.0)
+        except (TypeError, ValueError):
+            recovery_delta = 6.0
+        self.recovery_focus_delta_spin.setValue(max(0.0, min(30.0, recovery_delta)))
+
+        try:
+            legacy_zalo_threshold = float(self.config.get("zalo_alert_threshold_seconds", 5) or 5)
+        except (TypeError, ValueError):
+            legacy_zalo_threshold = 5.0
+        if "zalo_distraction_confirm_seconds" in self.config:
+            try:
+                zalo_confirm_seconds = float(self.config.get("zalo_distraction_confirm_seconds", legacy_zalo_threshold) or legacy_zalo_threshold)
+            except (TypeError, ValueError):
+                zalo_confirm_seconds = legacy_zalo_threshold
+        else:
+            zalo_confirm_seconds = 5.0 if legacy_zalo_threshold >= 30.0 else legacy_zalo_threshold
+        self.zalo_confirm_seconds_spin.setValue(max(1, min(120, int(round(zalo_confirm_seconds)))))
+
+        try:
+            cooldown_minutes = int(float(self.config.get("zalo_alert_cooldown_minutes", 10) or 0))
+        except (TypeError, ValueError):
+            cooldown_minutes = 10
+        if "zalo_state_cooldown_seconds" in self.config:
+            try:
+                cooldown_minutes = int(round(float(self.config.get("zalo_state_cooldown_seconds", cooldown_minutes * 60)) / 60.0))
+            except (TypeError, ValueError):
+                pass
+        self.zalo_cooldown_minutes_spin.setValue(max(0, min(60, cooldown_minutes)))
+
         self.enable_zalo_alerts.setChecked(bool(self.config.get("enable_zalo_alerts", False)))
         self.config["zalo_bot_token"] = FIXED_ZALO_BOT_TOKEN
         self.config["zalo_chat_id"] = str(self.config.get("zalo_chat_id", "") or "").strip()
@@ -1089,10 +1498,36 @@ class SettingsDialog(QDialog):
             "enable_focus_audio": self.enable_focus_audio.isChecked(),
             "focus_audio_track": str(self.focus_audio_track_combo.currentData() or DEFAULT_FOCUS_AUDIO_TRACK),
             "focus_audio_volume": int(self.focus_audio_volume_spin.value()),
+            "enable_task_context_monitoring": self.enable_task_context_monitoring.isChecked(),
+            "task_context_sample_interval_seconds": float(self.task_context_sample_interval_spin.value()),
+            "task_context_lookback_minutes": int(self.task_context_lookback_minutes_spin.value()),
+            "task_context_task_keywords": self._normalize_csv_value(self.task_context_task_keywords_edit.text()),
+            "task_context_distracting_keywords": self._normalize_csv_value(self.task_context_distracting_keywords_edit.text()),
+            "task_context_neutral_keywords": self._normalize_csv_value(self.task_context_neutral_keywords_edit.text()),
+            "task_context_task_apps": self._normalize_csv_value(self.task_context_task_apps_edit.text()),
+            "task_context_distracting_apps": self._normalize_csv_value(self.task_context_distracting_apps_edit.text()),
+            "task_context_excluded_keywords": self._normalize_csv_value(self.task_context_excluded_keywords_edit.text()),
+            "task_context_excluded_apps": self._normalize_csv_value(self.task_context_excluded_apps_edit.text()),
+            "task_context_checkin_enabled": self.task_context_checkin_enabled.isChecked(),
+            "task_context_checkin_interval_minutes": int(self.task_context_checkin_interval_spin.value()),
+            "task_context_checkin_cooldown_minutes": int(self.task_context_checkin_cooldown_spin.value()),
+            "task_context_checkin_risk_threshold": float(self.task_context_checkin_threshold_spin.value()),
+            "task_context_checkin_max_per_hour": int(self.task_context_checkin_max_per_hour_spin.value()),
+            "session_goal_prompt_enabled": self.session_goal_prompt_enabled.isChecked(),
+            "session_exit_feedback_enabled": self.session_exit_feedback_enabled.isChecked(),
+            "deadline_mode_enabled": self.deadline_mode_enabled.isChecked(),
+            "deadline_focus_minutes": int(self.deadline_focus_minutes_spin.value()),
+            "recovery_validation_delay_seconds": int(self.recovery_validation_delay_spin.value()),
+            "recovery_focus_delta_min": float(self.recovery_focus_delta_spin.value()),
+            "session_report_show_on_stop": self.session_report_show_on_stop.isChecked(),
             "enable_zalo_alerts": self.enable_zalo_alerts.isChecked(),
             "zalo_bot_token": FIXED_ZALO_BOT_TOKEN,
             "zalo_chat_id": str(self.config.get("zalo_chat_id", "") or "").strip(),
             "zalo_webhook_secret": str(self.config.get("zalo_webhook_secret", "") or ""),
+            "zalo_alert_threshold_seconds": int(self.zalo_confirm_seconds_spin.value()),
+            "zalo_distraction_confirm_seconds": int(self.zalo_confirm_seconds_spin.value()),
+            "zalo_alert_cooldown_minutes": int(self.zalo_cooldown_minutes_spin.value()),
+            "zalo_state_cooldown_seconds": int(self.zalo_cooldown_minutes_spin.value()) * 60,
             "zalo_alert_on_distraction": bool(self.config.get("zalo_alert_on_distraction", True)),
             "zalo_alert_on_drowsy": bool(self.config.get("zalo_alert_on_drowsy", True)),
             "zalo_alert_on_phone": bool(self.config.get("zalo_alert_on_phone", True)),

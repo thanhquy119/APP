@@ -11,6 +11,7 @@ import json
 import logging
 import statistics
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -575,6 +576,217 @@ class SessionAnalyticsStore:
 
         return baseline
 
+    def build_session_habit_report(
+        self,
+        session_record: Dict[str, Any],
+        profile_name: str = "default",
+    ) -> Dict[str, Any]:
+        """
+        Build a human-readable habit report from a completed session record.
+
+        Returns a dict with:
+        - session_seconds, effective_work_ratio, avg_work_readiness
+        - fatigue_trend, distraction_trend
+        - decline_start_minutes
+        - break_effectiveness (list)
+        - next_session_suggestion (str)
+        - next_work_minutes, next_break_minutes
+        """
+        r = session_record
+        session_seconds = float(r.get("session_seconds", 0) or 0)
+        focus_seconds = float(r.get("focus_seconds_cleaned", r.get("focus_seconds", 0)) or 0)
+        avg_score = float(r.get("avg_score_cleaned", r.get("avg_score", 0)) or 0)
+        distraction_count = int(r.get("distraction_count_cleaned", r.get("distraction_count", 0)) or 0)
+        score_drop = float(r.get("score_drop_per_hour_cleaned", r.get("score_drop_per_hour", 0)) or 0)
+        fatigue_onset = r.get("fatigue_onset_minutes")
+        perclos = float(r.get("perclos_cleaned", r.get("perclos", 0)) or 0)
+        blink_rate = float(r.get("blink_rate_per_min_cleaned", r.get("blink_rate_per_min", 0)) or 0)
+        eye_closure = float(r.get("eye_closure_ratio_cleaned", r.get("eye_closure_ratio", 0)) or 0)
+
+        effective_work_ratio = self._clamp(focus_seconds / max(1.0, session_seconds), 0.0, 1.0)
+
+        # Fatigue trend
+        fatigue_signals = 0
+        if perclos > 0.18:
+            fatigue_signals += 1
+        if eye_closure > 0.25:
+            fatigue_signals += 1
+        if blink_rate > 22:
+            fatigue_signals += 1
+        if score_drop > 10:
+            fatigue_signals += 1
+
+        if fatigue_signals >= 3:
+            fatigue_trend = "Cao — dấu hiệu mệt mỏi rõ"
+        elif fatigue_signals == 2:
+            fatigue_trend = "Trung bình — có dấu hiệu mệt nhẹ"
+        elif fatigue_signals == 1:
+            fatigue_trend = "Thấp — ổn định"
+        else:
+            fatigue_trend = "Không đáng kể"
+
+        # Distraction trend
+        session_hours = max(session_seconds / 3600.0, 1e-6)
+        dist_per_hour = distraction_count / session_hours
+        if dist_per_hour > 6:
+            distraction_trend = "Cao — nhiều lần lệch nhịp"
+        elif dist_per_hour > 3:
+            distraction_trend = "Trung bình"
+        elif dist_per_hour > 1:
+            distraction_trend = "Thấp"
+        else:
+            distraction_trend = "Rất thấp — tập trung tốt"
+
+        # Decline start
+        decline_start_minutes = None
+        if fatigue_onset is not None:
+            try:
+                decline_start_minutes = float(fatigue_onset)
+            except (TypeError, ValueError):
+                pass
+        if decline_start_minutes is None and score_drop > 8 and session_seconds > 600:
+            decline_start_minutes = round(session_seconds / 60.0 * 0.6, 1)
+
+        # Break effectiveness from checkins
+        checkins = r.get("checkins", []) or []
+        break_effectiveness: List[Dict[str, Any]] = []
+        for ci in checkins:
+            if not isinstance(ci, dict):
+                continue
+            answer = str(ci.get("answer", "") or "")
+            if answer in ("on_task", "slight_drift"):
+                transfer_score = 0.8 if answer == "on_task" else 0.5
+            elif answer == "off_task":
+                transfer_score = 0.2
+            elif answer == "need_break":
+                transfer_score = 0.1
+            else:
+                continue
+            break_effectiveness.append({
+                "break_type": "nghỉ ngắn",
+                "transfer_score": transfer_score,
+                "answer": answer,
+            })
+
+        # Next session suggestion
+        rec = self.get_recommendation(
+            profile_name,
+            default_work=int(r.get("work_interval_minutes_used", 25) or 25),
+            default_break=int(r.get("break_duration_minutes_used", 5) or 5),
+        )
+        next_work = int(rec.get("work_minutes", 25))
+        next_break = int(rec.get("break_minutes", 5))
+
+        suggestion_parts: List[str] = []
+        if fatigue_signals >= 2:
+            suggestion_parts.append("Nghỉ đủ trước phiên sau.")
+        if dist_per_hour > 4:
+            suggestion_parts.append("Thử sprint ngắn 15-20 phút để giảm phân tâm.")
+        task_type = str(r.get("session_context", {}).get("task_type", "") or "")
+        if task_type in ("reading", "review") and effective_work_ratio < 0.6:
+            suggestion_parts.append("Chia nhỏ tài liệu thành các đoạn ngắn hơn.")
+        if not suggestion_parts:
+            suggestion_parts.append(f"Phiên sau: làm việc {next_work}p, nghỉ {next_break}p.")
+
+        return {
+            "session_seconds": int(session_seconds),
+            "effective_work_ratio": effective_work_ratio,
+            "avg_work_readiness": avg_score,
+            "fatigue_trend": fatigue_trend,
+            "distraction_trend": distraction_trend,
+            "decline_start_minutes": decline_start_minutes,
+            "break_effectiveness": break_effectiveness,
+            "next_session_suggestion": " ".join(suggestion_parts),
+            "next_work_minutes": next_work,
+            "next_break_minutes": next_break,
+            "distraction_count": distraction_count,
+            "focus_seconds": int(focus_seconds),
+        }
+
+    def get_weekly_pattern(self, profile_name: str) -> Dict[str, Any]:
+        """
+        Analyse recent sessions to find the user's best working patterns.
+
+        Returns a dict with:
+        - best_hour_of_day (int or None)
+        - best_work_duration_minutes (int)
+        - best_break_type (str)
+        - task_types_with_low_focus (list[str])
+        - based_on_sessions (int)
+        """
+        profile = self.load_profile(profile_name)
+        sessions = profile.get("sessions", [])
+
+        valid = [
+            s for s in sessions[-30:]
+            if float(s.get("session_seconds_cleaned", s.get("session_seconds", 0)) or 0) >= 300
+        ]
+
+        if len(valid) < 5:
+            return {
+                "best_hour_of_day": None,
+                "best_work_duration_minutes": 25,
+                "best_break_type": "nghỉ ngắn",
+                "task_types_with_low_focus": [],
+                "based_on_sessions": len(valid),
+                "note": "Cần thêm dữ liệu (ít nhất 5 phiên) để phân tích xu hướng tuần.",
+            }
+
+        # Best hour of day by avg_score
+        hour_scores: Dict[int, List[float]] = {}
+        for s in valid:
+            ts = s.get("timestamp")
+            score = float(s.get("avg_score_cleaned", s.get("avg_score", 0)) or 0)
+            if ts:
+                try:
+                    hour = datetime.fromtimestamp(int(ts)).hour
+                    hour_scores.setdefault(hour, []).append(score)
+                except (TypeError, ValueError, OSError):
+                    pass
+
+        best_hour = None
+        if hour_scores:
+            best_hour = max(hour_scores, key=lambda h: statistics.fmean(hour_scores[h]))
+
+        # Best work duration
+        durations = []
+        for s in valid:
+            dur = float(s.get("session_seconds_cleaned", s.get("session_seconds", 0)) or 0)
+            score = float(s.get("avg_score_cleaned", s.get("avg_score", 0)) or 0)
+            if dur > 0 and score > 0:
+                durations.append((dur / 60.0, score))
+
+        best_duration = 25
+        if durations:
+            # Weight duration by score
+            total_weight = sum(sc for _, sc in durations)
+            if total_weight > 0:
+                weighted_dur = sum(d * sc for d, sc in durations) / total_weight
+                best_duration = int(round(self._clamp(weighted_dur, 15, 60)))
+
+        # Task types with low focus
+        task_focus: Dict[str, List[float]] = {}
+        for s in valid:
+            ctx = s.get("session_context", {}) or {}
+            task_type = str(ctx.get("task_type", "") or "")
+            score = float(s.get("avg_score_cleaned", s.get("avg_score", 0)) or 0)
+            if task_type:
+                task_focus.setdefault(task_type, []).append(score)
+
+        low_focus_tasks = [
+            t for t, scores in task_focus.items()
+            if len(scores) >= 2 and statistics.fmean(scores) < 65
+        ]
+
+        return {
+            "best_hour_of_day": best_hour,
+            "best_work_duration_minutes": best_duration,
+            "best_break_type": "nghỉ ngắn",
+            "task_types_with_low_focus": low_focus_tasks,
+            "based_on_sessions": len(valid),
+            "note": "",
+        }
+
     @staticmethod
     def _compute_score_trend(valid_sessions: List[Dict[str, Any]]) -> float:
         avg_scores: List[float] = []
@@ -631,6 +843,9 @@ class SessionAnalyticsStore:
         focus_ratios: List[float] = []
         avg_scores: List[float] = []
         distractions_per_hour: List[float] = []
+        task_alignment_scores: List[float] = []
+        digital_risks: List[float] = []
+        context_switches_per_hour: List[float] = []
         fatigue_onsets: List[float] = []
         blink_rates: List[float] = []
         closure_ratios: List[float] = []
@@ -654,6 +869,30 @@ class SessionAnalyticsStore:
                 float(sess.get("distraction_count_cleaned", sess.get("distraction_count", 0.0)) or 0.0),
             )
             distractions_per_hour.append(distractions / (duration / 3600.0))
+
+            task_alignment = sess.get("task_alignment_avg")
+            digital_risk = sess.get("digital_distraction_risk_avg")
+            context_switch_count = sess.get("context_switch_count")
+
+            try:
+                if task_alignment is not None:
+                    task_alignment_scores.append(self._clamp(float(task_alignment), 0.0, 1.0))
+            except (TypeError, ValueError):
+                pass
+
+            try:
+                if digital_risk is not None:
+                    digital_risks.append(self._clamp(float(digital_risk), 0.0, 1.0))
+            except (TypeError, ValueError):
+                pass
+
+            try:
+                if context_switch_count is not None:
+                    context_switches_per_hour.append(
+                        max(0.0, float(context_switch_count)) / (duration / 3600.0)
+                    )
+            except (TypeError, ValueError):
+                pass
 
             quality = sess.get("analytics_quality_score")
             try:
@@ -694,6 +933,13 @@ class SessionAnalyticsStore:
         avg_closure_ratio = statistics.fmean(closure_ratios) if closure_ratios else 0.0
         avg_perclos = statistics.fmean(perclos_values) if perclos_values else 0.0
         avg_quality_score = statistics.fmean(quality_scores) if quality_scores else 0.72
+        avg_task_alignment = statistics.fmean(task_alignment_scores) if task_alignment_scores else 0.75
+        avg_digital_risk = statistics.fmean(digital_risks) if digital_risks else 0.0
+        avg_context_switches_per_hour = (
+            statistics.fmean(context_switches_per_hour)
+            if context_switches_per_hour
+            else 0.0
+        )
         score_trend = self._compute_score_trend(valid_sessions)
 
         # Base recommendation from sustained focus quality.
@@ -789,6 +1035,15 @@ class SessionAnalyticsStore:
             except (TypeError, ValueError):
                 pass
 
+        # Digital-context pressure: shorten work interval when task alignment is low
+        # or when digital distraction / context switching is high.
+        if avg_digital_risk >= 0.65 or avg_task_alignment < 0.45:
+            work_minutes -= 5
+            break_minutes += 2
+        elif avg_digital_risk >= 0.45 or avg_context_switches_per_hour >= 18:
+            work_minutes -= 3
+            break_minutes += 1
+
         work_minutes = int(max(15, min(60, work_minutes)))
         break_minutes = int(max(3, min(20, break_minutes)))
 
@@ -801,7 +1056,9 @@ class SessionAnalyticsStore:
             f"{adaptation_stage}: làm việc {work_minutes}p, nghỉ {break_minutes}p | "
             f"focus={avg_focus_ratio:.0%}, score={avg_score:.1f}, "
             f"xao_nhang/giờ={avg_distraction_per_hour:.1f}, trend={score_trend:+.1f}, "
-            f"quality={avg_quality_score:.2f}"
+            f"quality={avg_quality_score:.2f}, "
+            f"task_alignment={avg_task_alignment:.0%}, digital_risk={avg_digital_risk:.0%}, "
+            f"context_switches/giờ={avg_context_switches_per_hour:.1f}"
         )
 
         return {

@@ -27,7 +27,7 @@ def build_round_lengths(cfg: SequenceConfig) -> list[int]:
 
 
 def build_sequence(symbols: tuple[str, ...], length: int) -> list[str]:
-    pool = list(symbols) or ["A", "S", "D", "F"]
+    pool = list(symbols) or ["1", "2", "3", "4", "5"]
     return [random.choice(pool) for _ in range(max(1, int(length)))]
 
 
@@ -62,5 +62,10 @@ def evaluate_sequence(results: list[SequenceRoundResult]) -> SequenceSummary:
     )
 
 
-def sequence_focus_score(summary: SequenceSummary) -> float:
+def sequence_attention_probe_score(summary: SequenceSummary) -> float:
     return max(0.0, min(100.0, summary.focus_consistency_score))
+
+
+def sequence_focus_score(summary: SequenceSummary) -> float:
+    """Backward-compatible alias for older integrations."""
+    return sequence_attention_probe_score(summary)

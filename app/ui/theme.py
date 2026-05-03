@@ -570,6 +570,21 @@ def get_stylesheet(is_dark: bool) -> str:
             border-color: rgba(159, 189, 224, 0.45);
         }}
 
+        QPushButton#logoutButton {{
+            background-color: {colors['secondary_btn_bg']};
+            border: 1px solid rgba(140, 167, 198, 0.30);
+            border-radius: 11px;
+            color: {colors['muted']};
+            padding: 0px 14px;
+            font-weight: 700;
+        }}
+
+        QPushButton#logoutButton:hover {{
+            background-color: {colors['secondary_btn_hover']};
+            border-color: {colors['danger']};
+            color: {colors['danger']};
+        }}
+
         QPushButton:checked {{
             background-color: {colors['text']};
             color: {colors['bg']};
@@ -682,6 +697,17 @@ def get_stylesheet(is_dark: bool) -> str:
         QProgressBar#cycleProgress::chunk {{
             background-color: {colors['accent']};
             border-radius: 5px;
+        }}
+
+        QProgressBar#readinessBreakdownBar {{
+            background-color: {colors['cycle_bg']};
+            border: none;
+            border-radius: 3px;
+        }}
+
+        QProgressBar#readinessBreakdownBar::chunk {{
+            background-color: {colors['accent_secondary']};
+            border-radius: 3px;
         }}
 
         QDialog#breakOverlay {{

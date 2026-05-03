@@ -170,6 +170,36 @@ def test_uncertain_state_never_sends_alert():
     assert client.messages == []
 
 
+def test_legacy_45_second_threshold_migrates_to_short_realtime_confirmation():
+    client = FakeZaloClient()
+    config = _base_config()
+    config.pop("zalo_distraction_confirm_seconds", None)
+    config["zalo_alert_threshold_seconds"] = 45
+    manager = ZaloAlertManager(config, client=client)
+
+    manager.handle_state_update(
+        FocusState.AWAY,
+        score=42.0,
+        confidence=0.86,
+        reason="away",
+        timestamp=600.0,
+        recommendation={},
+        in_warmup=False,
+    )
+    event = manager.handle_state_update(
+        FocusState.AWAY,
+        score=40.0,
+        confidence=0.88,
+        reason="away",
+        timestamp=606.0,
+        recommendation={},
+        in_warmup=False,
+    )
+
+    assert event is not None
+    assert event.alert_key == "away"
+
+
 def test_break_alert_obeys_cooldown():
     client = FakeZaloClient()
     manager = ZaloAlertManager(_base_config(), client=client)

@@ -34,6 +34,11 @@ class MetricSummary:
     hit_count: int
     correct_inhibition_count: int
 
+    @property
+    def attention_stability(self) -> float:
+        """UI-facing alias for the historical focus_stability field."""
+        return self.focus_stability
+
 
 @dataclass(frozen=True)
 class SequenceRoundResult:
@@ -94,3 +99,8 @@ class SessionSummary:
     best_game: str
     weakest_game: str
     game_scores: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def attention_stability(self) -> float:
+        """UI-facing alias for the historical focus_stability field."""
+        return self.focus_stability

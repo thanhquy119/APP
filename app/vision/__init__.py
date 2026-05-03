@@ -11,7 +11,18 @@ Main components:
 """
 
 # Core pipeline (recommended entry point)
-from .vision_pipeline import VisionPipeline, VisionResult, HeadPose, EyeMetrics, HandMetrics, draw_vision_overlay
+from .vision_pipeline import (
+    VisionPipeline,
+    VisionResult,
+    VisionQuality,
+    VisionCalibration,
+    CalibrationResult,
+    EyeTemporalStats,
+    HeadPose,
+    EyeMetrics,
+    HandMetrics,
+    draw_vision_overlay,
+)
 
 # Individual components
 from .face_landmarker import (
@@ -24,7 +35,8 @@ from .hand_landmarker import HandLandmarker, HandLandmarkResult, HandInfo
 from .camera import CameraCapture, CameraConfig
 from .model_manager import ensure_models, download_model, get_model_path
 
-# Legacy compatibility (deprecated, use VisionPipeline instead)
+# Legacy compatibility (deprecated paths; keep only for backward compatibility,
+# not as the main runtime route for the app)
 try:
     from .face_mesh import FaceMeshDetector
     from .head_pose import HeadPoseEstimator
@@ -41,6 +53,10 @@ __all__ = [
     # Primary API
     'VisionPipeline',
     'VisionResult',
+    'VisionQuality',
+    'VisionCalibration',
+    'CalibrationResult',
+    'EyeTemporalStats',
     'HeadPose',
     'EyeMetrics',
     'HandMetrics',

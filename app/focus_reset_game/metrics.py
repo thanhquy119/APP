@@ -72,9 +72,10 @@ def compute_focus_stability(
     baseline_avg_rt_ms: float | None,
 ) -> float:
     """
-    Compute a 0-100 focus stability score.
+    Compute a 0-100 short-term attention stability score.
 
     Heuristic combines error pressure, RT variability, and slowdown vs baseline.
+    It is a probe metric, not proof of full recovery after a break.
     """
     if total_trials <= 0:
         return 0.0
@@ -112,10 +113,10 @@ def compare_baseline(baseline: MetricSummary, session: MetricSummary) -> str:
 def build_feedback(summary: MetricSummary, comparison: str) -> str:
     """Build short user-friendly final feedback sentence."""
     if summary.focus_stability >= 78 and comparison in {"Better", "Similar"}:
-        return "Mức tập trung của bạn đang ổn định."
+        return "Phản ứng ổn định trong bài kiểm tra ngắn."
     if summary.focus_stability >= 60:
-        return "Bạn có dấu hiệu mệt nhẹ về chú ý."
-    return "Nên nghỉ thêm một chút trước khi tiếp tục."
+        return "Có vài dấu hiệu dao động chú ý trong bài kiểm tra ngắn."
+    return "Có dấu hiệu phản ứng chậm hoặc thiếu ổn định."
 
 
 def build_session_summary(
@@ -123,24 +124,33 @@ def build_session_summary(
     gonogo: MetricSummary | None,
     sequence: SequenceSummary | None,
     visual: VisualSummary | None,
+    additional_metrics: dict[str, MetricSummary] | None = None,
 ) -> SessionSummary:
     """Combine game-level metrics into one final session summary."""
     game_scores: dict[str, float] = {}
+    attention_summaries: list[MetricSummary] = []
 
     if gonogo is not None and gonogo.total_trials > 0:
         game_scores["Go/No-Go"] = _gonogo_score(gonogo)
+        attention_summaries.append(gonogo)
+    for name, metric in (additional_metrics or {}).items():
+        if metric is not None and metric.total_trials > 0:
+            game_scores[str(name)] = _gonogo_score(metric)
+            attention_summaries.append(metric)
     if sequence is not None and sequence.rounds > 0:
         game_scores["Sequence Memory"] = _sequence_score(sequence)
     if visual is not None and visual.rounds > 0:
         game_scores["Visual Search"] = _visual_score(visual)
 
-    if gonogo is not None and gonogo.total_trials > 0:
-        avg_rt = gonogo.average_reaction_ms
-        rt_var = gonogo.reaction_variability_ms
-        accuracy = gonogo.accuracy
-        commission = gonogo.commission_errors
-        omission = gonogo.omission_errors
-        comparison = compare_baseline(baseline or compute_summary([]), gonogo)
+    if attention_summaries:
+        avg_rt_candidates = [item.average_reaction_ms for item in attention_summaries if item.average_reaction_ms > 0]
+        rt_var_candidates = [item.reaction_variability_ms for item in attention_summaries if item.reaction_variability_ms > 0]
+        avg_rt = fmean(avg_rt_candidates) if avg_rt_candidates else 0.0
+        rt_var = fmean(rt_var_candidates) if rt_var_candidates else 0.0
+        accuracy = fmean(item.accuracy for item in attention_summaries)
+        commission = sum(item.commission_errors for item in attention_summaries)
+        omission = sum(item.omission_errors for item in attention_summaries)
+        comparison = compare_baseline(baseline or compute_summary([]), attention_summaries[0])
     else:
         avg_rt = 0.0
         rt_var = 0.0
@@ -182,18 +192,18 @@ def build_session_summary(
 def build_session_feedback(summary: SessionSummary) -> str:
     """Generate final guidance text from aggregate session metrics."""
     if summary.focus_stability >= 80.0:
-        return "Phục hồi rất tốt. Bạn có thể tiếp tục học/làm việc."
+        return "Bạn phản ứng tốt trong bài kiểm tra ngắn."
 
     if summary.focus_stability >= 65.0:
         if summary.weakest_game != "-":
             weakest = _game_name_vn(summary.weakest_game)
-            return f"Phục hồi khá ổn. Nên bổ sung nghỉ ngắn cho {weakest}."
-        return "Phục hồi khá ổn. Nghỉ thêm 1-2 phút để ổn định hơn."
+            return f"Phản ứng tương đối ổn định; nên chú ý thêm phần {weakest} nếu làm lại."
+        return "Phản ứng tương đối ổn định trong bài kiểm tra ngắn."
 
     if summary.comparison == "Worse":
-        return "Hiệu suất thấp hơn baseline. Nên nghỉ dài hơn trước khi quay lại."
+        return "Chỉ số thấp hơn baseline; nên nghỉ nhẹ thêm trước khi quay lại công việc."
 
-    return "Tập trung chưa ổn định. Thử uống nước, chỉnh tư thế, rồi làm thêm 1 lượt phục hồi ngắn."
+    return "Có dấu hiệu phản ứng chưa ổn định, nên nghỉ nhẹ thêm hoặc giảm độ khó phiên tiếp theo."
 
 
 def _performance_index(summary: MetricSummary) -> float:
@@ -231,6 +241,8 @@ def _visual_score(summary: VisualSummary) -> float:
 def _game_name_vn(value: str) -> str:
     mapping = {
         "Go/No-Go": "Go/No-Go",
+        "Stroop Match": "Stroop màu",
+        "Flanker Arrows": "Mũi tên Flanker",
         "Sequence Memory": "Ghi nhớ chuỗi",
         "Visual Search": "Tìm kiếm thị giác",
     }

@@ -73,7 +73,13 @@ class GoogleSheetsUserStore:
         return self._availability_error
 
     def ensure_available(self) -> bool:
-        worksheet = self._get_or_create_users_worksheet()
+        try:
+            worksheet = self._get_or_create_users_worksheet()
+        except Exception as exc:
+            logger.warning("Google Sheets users backend unavailable: %s", exc)
+            self._worksheet = None
+            self._availability_error = "Google Sheets tạm thời không phản hồi"
+            return False
         return worksheet is not None
 
     def find_by_identity(self, identity: str) -> Optional[UserAccount]:
@@ -220,7 +226,14 @@ class GoogleSheetsUserStore:
                 self._availability_error = "Không tạo được worksheet users trên Google Sheets"
                 return None
 
-        self._ensure_header(worksheet)
+        try:
+            self._ensure_header(worksheet)
+        except Exception as exc:
+            logger.warning("Failed to prepare users worksheet header: %s", exc)
+            self._worksheet = None
+            self._availability_error = "Google Sheets tạm thời không phản hồi"
+            return None
+
         self._worksheet = worksheet
         return worksheet
 
@@ -318,7 +331,11 @@ class GoogleSheetsUserStore:
                     final_header.append(legacy)
 
         if normalized != final_header:
-            worksheet.update("A1", [final_header])
+            try:
+                worksheet.update("A1", [final_header])
+            except Exception as exc:
+                self._availability_error = "Không thể cập nhật header users trên Google Sheets"
+                raise RuntimeError(self._availability_error) from exc
 
         self._header_fields = final_header
 

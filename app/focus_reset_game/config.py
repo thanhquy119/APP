@@ -26,7 +26,7 @@ class SequenceConfig:
     show_item_ms: int = 700
     gap_ms: int = 240
     input_timeout_s: int = 12
-    symbols: tuple[str, ...] = ("A", "S", "D", "F")
+    symbols: tuple[str, ...] = ("1", "2", "3", "4", "5")
 
 
 @dataclass
@@ -39,8 +39,8 @@ class VisualSearchConfig:
 
 @dataclass
 class FocusResetConfig:
-    app_name: str = "Focus Reset"
-    subtitle: str = "A short attention reset game with micro-breaks"
+    app_name: str = "Attention Probe"
+    subtitle: str = "A short post-break attention probe with micro-breaks"
 
     baseline_duration_s: int = 24
     micro_break_s: int = 12
@@ -125,7 +125,11 @@ class FocusResetConfig:
 
             symbols = sequence.get("symbols", list(cfg.sequence.symbols))
             if isinstance(symbols, list) and len(symbols) >= 4:
-                cfg.sequence.symbols = tuple(str(x)[:2] for x in symbols[:4])
+                cfg.sequence.symbols = tuple(str(x)[:2] for x in symbols[:5])
+                if tuple(symbol.upper() for symbol in cfg.sequence.symbols[:4]) == ("A", "S", "D", "F"):
+                    cfg.sequence.symbols = ("1", "2", "3", "4", "5")
+                elif cfg.sequence.symbols == ("1", "2", "3", "4"):
+                    cfg.sequence.symbols = ("1", "2", "3", "4", "5")
 
             if cfg.sequence.max_length < cfg.sequence.start_length:
                 cfg.sequence.max_length = cfg.sequence.start_length
@@ -160,31 +164,40 @@ class FocusResetConfig:
 @dataclass(frozen=True)
 class Theme:
     mode: str = "dark"
-    background: str = "#050b18"
-    panel: str = "#0f172a"
-    panel_alt: str = "#111c2f"
-    panel_soft: str = "#0a1426"
-    border: str = "#233347"
-    text_primary: str = "#e2e8f0"
-    text_muted: str = "#94a3b8"
-    accent: str = "#38bdf8"
-    accent_hover: str = "#0ea5e9"
-    accent_text: str = "#082032"
-    accent_border: str = "#8ddcff"
-    hero_bg: str = "#0b1323"
-    progress_bg: str = "#08101f"
-    table_bg: str = "#0a1426"
-    table_header_bg: str = "#111f35"
-    table_grid: str = "#1f334d"
-    selection_bg: str = "#123354"
-    success_text: str = "#86efac"
-    error_text: str = "#fca5a5"
-    info_text: str = "#93c5fd"
-    interactive_bg: str = "#101e32"
-    interactive_border: str = "#304860"
-    interactive_hover: str = "#17304f"
-    target_color: str = "#22c55e"
-    nogo_color: str = "#ef4444"
+    background: str = "#0b131d"
+    panel: str = "#131f2d"
+    panel_alt: str = "#111c2b"
+    panel_soft: str = "#111c2b"
+    border: str = "#2a394b"
+    text_primary: str = "#edf4fd"
+    text_muted: str = "#9baec5"
+    accent: str = "#59d5c0"
+    accent_hover: str = "#4abdaa"
+    accent_text: str = "#07251f"
+    accent_border: str = "#71e3d0"
+    hero_bg: str = "#111c2b"
+    progress_bg: str = "#162334"
+    table_bg: str = "#101a27"
+    table_header_bg: str = "#182637"
+    table_grid: str = "#2a394b"
+    selection_bg: str = "#1d4d4a"
+    success_text: str = "#7ef4d4"
+    error_text: str = "#f7b3b3"
+    info_text: str = "#9fd6ff"
+    interactive_bg: str = "#223449"
+    interactive_border: str = "#2f465e"
+    interactive_hover: str = "#293f58"
+    target_color: str = "#59d5c0"
+    nogo_color: str = "#ef9d95"
+    titlebar_dot_close: str = "#ff5f57"
+    titlebar_dot_close_hover: str = "#ff736d"
+    titlebar_dot_close_pressed: str = "#e14f49"
+    titlebar_dot_min: str = "#febc2e"
+    titlebar_dot_min_hover: str = "#ffca4c"
+    titlebar_dot_min_pressed: str = "#dea225"
+    titlebar_dot_max: str = "#28c840"
+    titlebar_dot_max_hover: str = "#42d95a"
+    titlebar_dot_max_pressed: str = "#1faa36"
 
     @classmethod
     def for_mode(cls, mode: str) -> "Theme":
@@ -194,31 +207,40 @@ class Theme:
 
         return cls(
             mode="light",
-            background="#eff4fb",
+            background="#f2f8fe",
             panel="#ffffff",
-            panel_alt="#edf3fb",
-            panel_soft="#f6f9ff",
-            border="#c9d7e6",
-            text_primary="#263648",
-            text_muted="#607488",
-            accent="#3ea99a",
-            accent_hover="#319688",
+            panel_alt="#f7fbff",
+            panel_soft="#eef6fd",
+            border="#c5d6e8",
+            text_primary="#182c41",
+            text_muted="#435d76",
+            accent="#2f9f90",
+            accent_hover="#268f82",
             accent_text="#ffffff",
-            accent_border="#2f9687",
-            hero_bg="#f4f8ff",
-            progress_bg="#e3edf8",
-            table_bg="#f9fbff",
-            table_header_bg="#e8f0fa",
-            table_grid="#c7d6e6",
-            selection_bg="#d4ebe6",
-            success_text="#1f8b5d",
-            error_text="#bc4b4b",
-            info_text="#2f6fa8",
-            interactive_bg="#e8eff9",
-            interactive_border="#b8cada",
-            interactive_hover="#dde8f5",
-            target_color="#1b9f62",
+            accent_border="#2f9f90",
+            hero_bg="#f2f8fe",
+            progress_bg="#dfeaf6",
+            table_bg="#ffffff",
+            table_header_bg="#eaf3fb",
+            table_grid="#c5d6e8",
+            selection_bg="#d7eee9",
+            success_text="#16775f",
+            error_text="#b74747",
+            info_text="#286f9c",
+            interactive_bg="#e7f0fa",
+            interactive_border="#b8ccdf",
+            interactive_hover="#dbe8f5",
+            target_color="#2f9f90",
             nogo_color="#c75a52",
+            titlebar_dot_close="#ff5f57",
+            titlebar_dot_close_hover="#ff736d",
+            titlebar_dot_close_pressed="#e14f49",
+            titlebar_dot_min="#febc2e",
+            titlebar_dot_min_hover="#ffd159",
+            titlebar_dot_min_pressed="#dea225",
+            titlebar_dot_max="#2fca46",
+            titlebar_dot_max_hover="#4ddc63",
+            titlebar_dot_max_pressed="#24ab39",
         )
 
 

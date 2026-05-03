@@ -79,5 +79,10 @@ def evaluate_visual(results: list[VisualRoundResult]) -> VisualSummary:
     )
 
 
-def visual_focus_score(summary: VisualSummary) -> float:
+def visual_attention_probe_score(summary: VisualSummary) -> float:
     return max(0.0, min(100.0, summary.visual_focus_score))
+
+
+def visual_focus_score(summary: VisualSummary) -> float:
+    """Backward-compatible alias for older integrations."""
+    return visual_attention_probe_score(summary)

@@ -8,8 +8,59 @@ Main entry point for the application.
 import sys
 import logging
 import json
+import os
 from pathlib import Path
 from typing import Optional
+
+
+def _relaunch_with_project_venv_if_needed() -> None:
+    """Prefer the project virtualenv when launching from source."""
+    if getattr(sys, "frozen", False):
+        return
+    if os.environ.get("FOCUSGUARDIAN_NO_VENV_REEXEC") == "1":
+        return
+
+    app_root = Path(__file__).resolve().parent
+    venv_python = app_root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    if not venv_python.exists():
+        return
+
+    try:
+        current_python = Path(sys.executable).resolve()
+        target_python = venv_python.resolve()
+    except Exception:
+        current_python = Path(sys.executable)
+        target_python = venv_python
+
+    if current_python == target_python:
+        return
+
+    if os.environ.get("FOCUSGUARDIAN_VENV_REEXEC") == "1":
+        print(
+            "FocusGuardian: dang chay sai Python runtime. Hay dung lenh:\n"
+            r"  .\.venv\Scripts\python.exe main.py",
+            file=sys.stderr,
+            flush=True,
+        )
+        raise SystemExit(1)
+
+    os.environ["FOCUSGUARDIAN_VENV_REEXEC"] = "1"
+    print(f"FocusGuardian: relaunching with project Python: {target_python}", flush=True)
+    try:
+        os.execv(str(target_python), [str(target_python), str(Path(__file__).resolve()), *sys.argv[1:]])
+    except OSError as exc:
+        print(
+            "FocusGuardian: khong the tu chuyen sang .venv.\n"
+            f"Ly do: {exc}\n"
+            "Hay chay bang lenh:\n"
+            r"  .\.venv\Scripts\python.exe main.py",
+            file=sys.stderr,
+            flush=True,
+        )
+        raise SystemExit(1) from exc
+
+
+_relaunch_with_project_venv_if_needed()
 
 from PyQt6.QtWidgets import QApplication, QDialog
 from PyQt6.QtCore import Qt, QTimer
@@ -51,6 +102,10 @@ DEFAULT_CONFIG = {
     "enable_phone_detection": True,
     "phone_detection_mode": "heuristic",
     "phone_confidence_threshold": 0.55,
+    "phone_detection_interval_frames": 3,
+    "phone_confirmation_window_seconds": 2.5,
+    "phone_confirmation_min_hits": 3,
+    "phone_confidence_min": 0.58,
     "phone_eye_down_min_duration": 45,
     "blink_rate_low_screen_max": 10.0,
     "blink_rate_high_fatigue_min": 22.0,
@@ -64,6 +119,8 @@ DEFAULT_CONFIG = {
     "score_noise_softening_seconds": 2.6,
     "score_confidence_floor_focused": 0.58,
     "score_confidence_floor_uncertain": 0.33,
+    "vision_confidence_uncertain_threshold": 0.42,
+    "vision_confidence_hard_floor": 0.28,
     "score_recover_rate": 5.5,
     "score_drop_rate": 4.0,
     "score_recover_rate_focused_stable": 4.4,
@@ -80,11 +137,35 @@ DEFAULT_CONFIG = {
     "break_interval_minutes": 25,
     "break_duration_minutes": 5,
     "profile_name": "default",
+    "vision_calibration": {},
     "enable_personalization": True,
     "auto_apply_personalization": True,
     "auto_break_on_distraction": True,
     "distraction_break_cooldown_minutes": 15,
     "auto_resume_after_break": True,
+    "enable_task_context_monitoring": True,
+    "task_context_sample_interval_seconds": 5.0,
+    "task_context_lookback_minutes": 5.0,
+    "task_context_max_samples": 2400,
+    "task_context_task_keywords": "code,study,research,docs,sheets,github,notion",
+    "task_context_distracting_keywords": "youtube,facebook,instagram,tiktok,netflix,steam,game",
+    "task_context_neutral_keywords": "explorer,settings,file",
+    "task_context_task_apps": "",
+    "task_context_distracting_apps": "",
+    "task_context_excluded_keywords": "focusguardian,notification",
+    "task_context_excluded_apps": "",
+    "task_context_checkin_enabled": True,
+    "task_context_checkin_interval_minutes": 12,
+    "task_context_checkin_cooldown_minutes": 8,
+    "task_context_checkin_risk_threshold": 0.72,
+    "task_context_checkin_max_per_hour": 3,
+    "session_goal_prompt_enabled": True,
+    "session_exit_feedback_enabled": True,
+    "deadline_mode_enabled": False,
+    "deadline_focus_minutes": 45,
+    "recovery_validation_delay_seconds": 90,
+    "recovery_focus_delta_min": 6.0,
+    "session_report_show_on_stop": True,
     "enable_pomodoro": False,
     "pomodoro_work": 25,
     "pomodoro_short_break": 5,
@@ -104,7 +185,9 @@ DEFAULT_CONFIG = {
     "zalo_webhook_secret": "",
     "zalo_api_timeout_seconds": 8.0,
     "zalo_alert_cooldown_minutes": 10,
-    "zalo_alert_threshold_seconds": 45,
+    "zalo_alert_threshold_seconds": 5,
+    "zalo_distraction_confirm_seconds": 5,
+    "zalo_state_cooldown_seconds": 600,
     "zalo_alert_on_distraction": True,
     "zalo_alert_on_drowsy": True,
     "zalo_alert_on_phone": True,
@@ -182,6 +265,192 @@ def load_config() -> dict:
     config["auth_session_login_at_iso"] = str(config.get("auth_session_login_at_iso", "") or "").strip()
     config["auth_persist_session"] = bool(config.get("auth_persist_session", True))
 
+    def _normalize_keyword_csv(key: str, default_text: str) -> None:
+        raw = config.get(key, default_text)
+        tokens: list[str] = []
+
+        if isinstance(raw, (list, tuple, set)):
+            for item in raw:
+                token = str(item or "").strip().lower()
+                if token:
+                    tokens.append(token)
+        else:
+            text = str(raw or "").replace("\n", ",").replace(";", ",")
+            for item in text.split(","):
+                token = item.strip().lower()
+                if token:
+                    tokens.append(token)
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for token in tokens:
+            if token in seen:
+                continue
+            seen.add(token)
+            deduped.append(token)
+
+        config[key] = ", ".join(deduped)
+
+    config["enable_task_context_monitoring"] = bool(config.get("enable_task_context_monitoring", True))
+    config["task_context_checkin_enabled"] = bool(config.get("task_context_checkin_enabled", True))
+    config["session_goal_prompt_enabled"] = bool(config.get("session_goal_prompt_enabled", True))
+    config["session_exit_feedback_enabled"] = bool(config.get("session_exit_feedback_enabled", True))
+    config["deadline_mode_enabled"] = bool(config.get("deadline_mode_enabled", False))
+    config["session_report_show_on_stop"] = bool(config.get("session_report_show_on_stop", True))
+
+    try:
+        config["task_context_sample_interval_seconds"] = max(
+            2.0,
+            min(30.0, float(config.get("task_context_sample_interval_seconds", 5.0) or 5.0)),
+        )
+    except (TypeError, ValueError):
+        config["task_context_sample_interval_seconds"] = 5.0
+
+    try:
+        config["task_context_lookback_minutes"] = max(
+            1.0,
+            min(60.0, float(config.get("task_context_lookback_minutes", 5.0) or 5.0)),
+        )
+    except (TypeError, ValueError):
+        config["task_context_lookback_minutes"] = 5.0
+
+    try:
+        config["task_context_max_samples"] = max(
+            120,
+            min(12000, int(float(config.get("task_context_max_samples", 2400) or 2400))),
+        )
+    except (TypeError, ValueError):
+        config["task_context_max_samples"] = 2400
+
+    try:
+        config["task_context_checkin_interval_minutes"] = max(
+            2,
+            min(60, int(float(config.get("task_context_checkin_interval_minutes", 12) or 12))),
+        )
+    except (TypeError, ValueError):
+        config["task_context_checkin_interval_minutes"] = 12
+
+    try:
+        config["task_context_checkin_cooldown_minutes"] = max(
+            1,
+            min(60, int(float(config.get("task_context_checkin_cooldown_minutes", 8) or 8))),
+        )
+    except (TypeError, ValueError):
+        config["task_context_checkin_cooldown_minutes"] = 8
+
+    try:
+        checkin_risk = float(config.get("task_context_checkin_risk_threshold", 0.72) or 0.72)
+    except (TypeError, ValueError):
+        checkin_risk = 0.72
+    config["task_context_checkin_risk_threshold"] = max(0.2, min(0.98, checkin_risk))
+
+    try:
+        config["task_context_checkin_max_per_hour"] = max(
+            1,
+            min(12, int(float(config.get("task_context_checkin_max_per_hour", 3) or 3))),
+        )
+    except (TypeError, ValueError):
+        config["task_context_checkin_max_per_hour"] = 3
+
+    try:
+        config["deadline_focus_minutes"] = max(
+            10,
+            min(180, int(float(config.get("deadline_focus_minutes", 45) or 45))),
+        )
+    except (TypeError, ValueError):
+        config["deadline_focus_minutes"] = 45
+
+    try:
+        config["recovery_validation_delay_seconds"] = max(
+            30,
+            min(600, int(float(config.get("recovery_validation_delay_seconds", 90) or 90))),
+        )
+    except (TypeError, ValueError):
+        config["recovery_validation_delay_seconds"] = 90
+
+    try:
+        config["recovery_focus_delta_min"] = max(
+            0.0,
+            min(30.0, float(config.get("recovery_focus_delta_min", 6.0) or 6.0)),
+        )
+    except (TypeError, ValueError):
+        config["recovery_focus_delta_min"] = 6.0
+
+    _normalize_keyword_csv(
+        "task_context_task_keywords",
+        "code,study,research,docs,sheets,github,notion",
+    )
+    _normalize_keyword_csv(
+        "task_context_distracting_keywords",
+        "youtube,facebook,instagram,tiktok,netflix,steam,game",
+    )
+    _normalize_keyword_csv(
+        "task_context_neutral_keywords",
+        "explorer,settings,file",
+    )
+    _normalize_keyword_csv(
+        "task_context_task_apps",
+        "",
+    )
+    _normalize_keyword_csv(
+        "task_context_distracting_apps",
+        "",
+    )
+    _normalize_keyword_csv(
+        "task_context_excluded_keywords",
+        "focusguardian,notification",
+    )
+    _normalize_keyword_csv(
+        "task_context_excluded_apps",
+        "",
+    )
+
+    try:
+        config["phone_detection_interval_frames"] = max(
+            1,
+            int(float(config.get("phone_detection_interval_frames", 3) or 3)),
+        )
+    except (TypeError, ValueError):
+        config["phone_detection_interval_frames"] = 3
+
+    try:
+        config["phone_confirmation_window_seconds"] = max(
+            0.8,
+            float(config.get("phone_confirmation_window_seconds", 2.5) or 2.5),
+        )
+    except (TypeError, ValueError):
+        config["phone_confirmation_window_seconds"] = 2.5
+
+    try:
+        config["phone_confirmation_min_hits"] = max(
+            1,
+            int(float(config.get("phone_confirmation_min_hits", 3) or 3)),
+        )
+    except (TypeError, ValueError):
+        config["phone_confirmation_min_hits"] = 3
+
+    try:
+        phone_confidence_min = float(config.get("phone_confidence_min", 0.58) or 0.58)
+    except (TypeError, ValueError):
+        phone_confidence_min = 0.58
+    config["phone_confidence_min"] = max(0.2, min(0.95, phone_confidence_min))
+
+    try:
+        vision_uncertain = float(config.get("vision_confidence_uncertain_threshold", 0.42) or 0.42)
+    except (TypeError, ValueError):
+        vision_uncertain = 0.42
+    vision_uncertain = max(0.05, min(0.95, vision_uncertain))
+    config["vision_confidence_uncertain_threshold"] = vision_uncertain
+
+    try:
+        vision_hard_floor = float(config.get("vision_confidence_hard_floor", 0.28) or 0.28)
+    except (TypeError, ValueError):
+        vision_hard_floor = 0.28
+    config["vision_confidence_hard_floor"] = max(0.0, min(vision_uncertain, vision_hard_floor))
+
+    if not isinstance(config.get("vision_calibration"), dict):
+        config["vision_calibration"] = {}
+
     # Keep minimize button behavior consistent with taskbar apps.
     config["minimize_to_tray"] = bool(config.get("minimize_to_tray", False))
 
@@ -191,6 +460,10 @@ def load_config() -> dict:
 def save_config(config: dict):
     """Save configuration to file."""
     persistable = dict(config or {})
+    for key in list(persistable.keys()):
+        if str(key).startswith("_"):
+            persistable.pop(key, None)
+
     if bool(persistable.get("enable_google_sheets_sync", False)):
         for key in PROFILE_SCOPED_CONFIG_KEYS:
             # Keep theme locally so startup/auth palette follows the last selected mode
@@ -342,6 +615,7 @@ class FocusGuardianApp:
             profile_name=cached_profile,
             login_at=cached_login_at,
             login_at_iso=cached_login_iso,
+            verify_backend=False,
         )
         if not result.success:
             logger.info("Skip restoring cached session: %s", result.message)

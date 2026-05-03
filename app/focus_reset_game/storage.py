@@ -16,6 +16,7 @@ class SessionStorage:
 
     def __init__(self, history_path: Path):
         self.history_path = history_path
+        self.validation_path = history_path.with_name("focus_reset_recovery_validation.json")
         self.history_path.parent.mkdir(parents=True, exist_ok=True)
 
     def load(self) -> list[dict[str, Any]]:
@@ -39,6 +40,27 @@ class SessionStorage:
         with open(self.history_path, "w", encoding="utf-8") as f:
             json.dump(rows[-1000:], f, indent=2, ensure_ascii=False)
 
+    def load_recovery_validations(self) -> list[dict[str, Any]]:
+        if not self.validation_path.exists():
+            return []
+
+        try:
+            with open(self.validation_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data
+        except Exception:
+            pass
+
+        return []
+
+    def append_recovery_validation(self, validation_record: dict[str, Any]) -> None:
+        rows = self.load_recovery_validations()
+        rows.append(validation_record)
+
+        with open(self.validation_path, "w", encoding="utf-8") as f:
+            json.dump(rows[-1000:], f, indent=2, ensure_ascii=False)
+
     def export_csv(self, target_path: Path | None = None) -> Path:
         records = self.load()
         out = target_path or self.history_path.with_suffix(".csv")
@@ -57,8 +79,11 @@ class SessionStorage:
             "best_game",
             "weakest_game",
             "score_gonogo",
+            "score_stroop",
+            "score_flanker",
             "score_sequence",
             "score_visual",
+            "selected_games",
             "sequence_accuracy",
             "sequence_max_length",
             "visual_accuracy",
@@ -96,8 +121,11 @@ def build_session_record(
         "best_game": str(session_summary.best_game),
         "weakest_game": str(session_summary.weakest_game),
         "score_gonogo": round(float(game_scores.get("Go/No-Go", 0.0)), 2),
+        "score_stroop": round(float(game_scores.get("Stroop Match", 0.0)), 2),
+        "score_flanker": round(float(game_scores.get("Flanker Arrows", 0.0)), 2),
         "score_sequence": round(float(game_scores.get("Sequence Memory", 0.0)), 2),
         "score_visual": round(float(game_scores.get("Visual Search", 0.0)), 2),
+        "selected_games": "",
         "sequence_accuracy": round(float((sequence_summary.accuracy if sequence_summary else 0.0)), 2),
         "sequence_max_length": int((sequence_summary.max_sequence_length if sequence_summary else 0)),
         "visual_accuracy": round(float((visual_summary.accuracy if visual_summary else 0.0)), 2),

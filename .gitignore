@@ -15,10 +15,14 @@ env/
 
 # Local editor settings
 .vscode/
+.claude/
 
 # Local runtime files
 *.log
 google_service_account.json
+analytics/journey_tile_cache/
+analytics/profile_settings_cache.json
+*.diff
 
 # Build and packaging artifacts
 build/

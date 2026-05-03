@@ -36,6 +36,29 @@ PROFILE_SCOPED_CONFIG_KEYS: tuple[str, ...] = (
     "auto_break_on_distraction",
     "distraction_break_cooldown_minutes",
     "auto_resume_after_break",
+    "enable_task_context_monitoring",
+    "task_context_sample_interval_seconds",
+    "task_context_lookback_minutes",
+    "task_context_max_samples",
+    "task_context_task_keywords",
+    "task_context_distracting_keywords",
+    "task_context_neutral_keywords",
+    "task_context_task_apps",
+    "task_context_distracting_apps",
+    "task_context_excluded_keywords",
+    "task_context_excluded_apps",
+    "task_context_checkin_enabled",
+    "task_context_checkin_interval_minutes",
+    "task_context_checkin_cooldown_minutes",
+    "task_context_checkin_risk_threshold",
+    "task_context_checkin_max_per_hour",
+    "session_goal_prompt_enabled",
+    "session_exit_feedback_enabled",
+    "deadline_mode_enabled",
+    "deadline_focus_minutes",
+    "recovery_validation_delay_seconds",
+    "recovery_focus_delta_min",
+    "session_report_show_on_stop",
     "enable_pomodoro",
     "pomodoro_work",
     "pomodoro_short_break",
@@ -46,6 +69,8 @@ PROFILE_SCOPED_CONFIG_KEYS: tuple[str, ...] = (
     "zalo_api_timeout_seconds",
     "zalo_alert_cooldown_minutes",
     "zalo_alert_threshold_seconds",
+    "zalo_distraction_confirm_seconds",
+    "zalo_state_cooldown_seconds",
     "zalo_alert_on_distraction",
     "zalo_alert_on_drowsy",
     "zalo_alert_on_phone",
@@ -70,6 +95,29 @@ PROFILE_SCOPED_DEFAULT_SETTINGS: Dict[str, Any] = {
     "auto_break_on_distraction": True,
     "distraction_break_cooldown_minutes": 15,
     "auto_resume_after_break": True,
+    "enable_task_context_monitoring": True,
+    "task_context_sample_interval_seconds": 5.0,
+    "task_context_lookback_minutes": 5.0,
+    "task_context_max_samples": 2400,
+    "task_context_task_keywords": "code,study,research,docs,sheets,github,notion",
+    "task_context_distracting_keywords": "youtube,facebook,instagram,tiktok,netflix,steam,game",
+    "task_context_neutral_keywords": "explorer,settings,file",
+    "task_context_task_apps": "",
+    "task_context_distracting_apps": "",
+    "task_context_excluded_keywords": "focusguardian,notification",
+    "task_context_excluded_apps": "",
+    "task_context_checkin_enabled": True,
+    "task_context_checkin_interval_minutes": 12,
+    "task_context_checkin_cooldown_minutes": 8,
+    "task_context_checkin_risk_threshold": 0.72,
+    "task_context_checkin_max_per_hour": 3,
+    "session_goal_prompt_enabled": True,
+    "session_exit_feedback_enabled": True,
+    "deadline_mode_enabled": False,
+    "deadline_focus_minutes": 45,
+    "recovery_validation_delay_seconds": 90,
+    "recovery_focus_delta_min": 6.0,
+    "session_report_show_on_stop": True,
     "enable_pomodoro": False,
     "pomodoro_work": 25,
     "pomodoro_short_break": 5,
@@ -79,7 +127,9 @@ PROFILE_SCOPED_DEFAULT_SETTINGS: Dict[str, Any] = {
     "zalo_webhook_secret": "",
     "zalo_api_timeout_seconds": 8.0,
     "zalo_alert_cooldown_minutes": 10,
-    "zalo_alert_threshold_seconds": 45,
+    "zalo_alert_threshold_seconds": 5,
+    "zalo_distraction_confirm_seconds": 5,
+    "zalo_state_cooldown_seconds": 600,
     "zalo_alert_on_distraction": True,
     "zalo_alert_on_drowsy": True,
     "zalo_alert_on_phone": True,
@@ -97,6 +147,12 @@ _PROFILE_BOOL_KEYS: set[str] = {
     "enable_break_reminders",
     "auto_break_on_distraction",
     "auto_resume_after_break",
+    "enable_task_context_monitoring",
+    "task_context_checkin_enabled",
+    "session_goal_prompt_enabled",
+    "session_exit_feedback_enabled",
+    "deadline_mode_enabled",
+    "session_report_show_on_stop",
     "enable_pomodoro",
     "enable_zalo_alerts",
     "zalo_alert_on_distraction",
@@ -112,14 +168,26 @@ _PROFILE_INT_KEYS: set[str] = {
     "break_interval_minutes",
     "break_duration_minutes",
     "distraction_break_cooldown_minutes",
+    "task_context_max_samples",
+    "task_context_checkin_interval_minutes",
+    "task_context_checkin_cooldown_minutes",
+    "task_context_checkin_max_per_hour",
+    "deadline_focus_minutes",
+    "recovery_validation_delay_seconds",
     "pomodoro_work",
     "pomodoro_short_break",
     "pomodoro_long_break",
     "zalo_alert_cooldown_minutes",
     "zalo_alert_threshold_seconds",
+    "zalo_distraction_confirm_seconds",
+    "zalo_state_cooldown_seconds",
 }
 
 _PROFILE_FLOAT_KEYS: set[str] = {
+    "task_context_sample_interval_seconds",
+    "task_context_lookback_minutes",
+    "task_context_checkin_risk_threshold",
+    "recovery_focus_delta_min",
     "zalo_api_timeout_seconds",
 }
 
@@ -380,7 +448,13 @@ class GoogleSheetsSessionSync:
                 logger.warning("Failed to create worksheet '%s': %s", title, exc)
                 return None
 
-        self._ensure_header(worksheet, header)
+        try:
+            self._ensure_header(worksheet, header)
+        except Exception as exc:
+            logger.warning("Failed to prepare worksheet '%s' header: %s", title, exc)
+            self._worksheets.pop(kind, None)
+            return None
+
         self._worksheets[kind] = worksheet
         return worksheet
 
@@ -450,11 +524,14 @@ class GoogleSheetsSessionSync:
     def _ensure_header(self, worksheet, header: List[str]) -> None:
         try:
             first_row = worksheet.row_values(1)
-        except Exception:
-            first_row = []
+        except Exception as exc:
+            raise RuntimeError("Không đọc được header Google Sheets") from exc
 
         if first_row != header:
-            worksheet.update("A1", [header])
+            try:
+                worksheet.update("A1", [header])
+            except Exception as exc:
+                raise RuntimeError("Không cập nhật được header Google Sheets") from exc
 
     def _header(self, kind: str) -> List[str]:
         if kind == "sessions":
@@ -522,6 +599,11 @@ class GoogleSheetsSessionSync:
             "state_drowsy",
             "state_away",
             "state_uncertain",
+            "session_exit_reason",
+            "session_exit_reason_label",
+            "session_exit_focus_rating",
+            "session_exit_focus_rating_label",
+            "session_exit_note",
         ]
 
     @staticmethod
@@ -579,6 +661,10 @@ class GoogleSheetsSessionSync:
         )
 
         states = session_record.get("state_seconds", {}) or {}
+        session_exit = session_record.get("session_exit", {}) or {}
+        if not isinstance(session_exit, dict):
+            session_exit = {}
+
         return [
             timestamp,
             ts_iso,
@@ -618,6 +704,11 @@ class GoogleSheetsSessionSync:
             float(states.get("DROWSY_FATIGUE", 0.0) or 0.0),
             float(states.get("AWAY", 0.0) or 0.0),
             float(states.get("UNCERTAIN", 0.0) or 0.0),
+            session_exit.get("reason", ""),
+            session_exit.get("reason_label", ""),
+            session_exit.get("focus_rating", ""),
+            session_exit.get("focus_rating_label", ""),
+            session_exit.get("note", ""),
         ]
 
     @staticmethod

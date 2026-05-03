@@ -32,7 +32,12 @@ def summarize_gonogo(
     )
 
 
-def gonogo_focus_score(summary: MetricSummary) -> float:
-    """Project Go/No-Go metrics into one 0-100 game score."""
+def gonogo_attention_probe_score(summary: MetricSummary) -> float:
+    """Project Go/No-Go probe metrics into one 0-100 short attention score."""
     weighted = (summary.focus_stability * 0.7) + (summary.accuracy * 0.3)
     return max(0.0, min(100.0, weighted))
+
+
+def gonogo_focus_score(summary: MetricSummary) -> float:
+    """Backward-compatible alias for older integrations."""
+    return gonogo_attention_probe_score(summary)

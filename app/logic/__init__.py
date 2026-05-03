@@ -20,6 +20,13 @@ from .personalization import (
 )
 from .zalo_bot import ZaloBotConfig, ZaloBotClient
 from .zalo_alerts import ZaloAlertManager, ZaloAlertEvent
+from .task_context import (
+    TaskContextConfig,
+    TaskContextSample,
+    TaskContextStats,
+    TaskContextMonitor,
+    TaskContextClassifier,
+)
 from .auth import UserAccount, CurrentUserSession
 from .auth_manager import AuthManager, AuthResult
 from .user_store import GoogleSheetsUserStore
@@ -41,6 +48,11 @@ __all__ = [
     'ZaloBotClient',
     'ZaloAlertManager',
     'ZaloAlertEvent',
+    'TaskContextConfig',
+    'TaskContextSample',
+    'TaskContextStats',
+    'TaskContextMonitor',
+    'TaskContextClassifier',
     'UserAccount',
     'CurrentUserSession',
     'AuthManager',
