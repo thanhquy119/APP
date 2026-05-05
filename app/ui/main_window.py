@@ -32,6 +32,7 @@ import numpy as np
 from ..logic.focus_engine import FocusState, FocusEngine, FrameFeatures
 from ..logic.google_sheets_sync import PROFILE_SCOPED_CONFIG_KEYS, PROFILE_SCOPED_DEFAULT_SETTINGS
 from ..logic.session_analytics import SessionAnalyticsStore
+from ..logic.scientific_validation import ValidationDataStore
 from ..logic.zalo_alerts import ZaloAlertManager
 from ..logic.auth_manager import AuthManager
 from ..logic.focus_audio import FocusAudioManager
@@ -50,6 +51,7 @@ from .context_dialogs import (
     ContextCheckInDialog,
     SessionExitDialog,
 )
+from .journey_pip import FocusJourneyPiPWindow
 
 LOCAL_PROFILE_SETTINGS_CACHE = Path(__file__).resolve().parents[2] / "analytics" / "profile_settings_cache.json"
 
@@ -1984,6 +1986,8 @@ class MainWindow(QMainWindow):
         self.config.setdefault("focus_audio_volume", 30)
         self.config.setdefault("vision_target_fps", 10)
         self.config.setdefault("enable_performance_logging", False)
+        self.config.setdefault("enable_journey_pip", True)
+        self.config.setdefault("enable_validation_logging", True)
         self.config["show_overlay"] = False
         self.config["enable_personalization"] = True
         self.config["auto_apply_personalization"] = True
@@ -1994,6 +1998,7 @@ class MainWindow(QMainWindow):
 
         # Session analytics and personalization
         self.analytics_store = SessionAnalyticsStore(google_config=self.config)
+        self.validation_store = ValidationDataStore()
         self.zalo_alert_manager = ZaloAlertManager(self.config)
         self.focus_audio_manager = FocusAudioManager(config=self.config, parent=self)
         self.profile_name = self._get_profile_name()
@@ -2030,6 +2035,7 @@ class MainWindow(QMainWindow):
         self._vision_effective_frames = 0
         self._vision_skipped_frames = 0
         self._last_perf_log_at = 0.0
+        self._last_validation_prediction_at = 0.0
 
         # Initialize components
         self._init_vision()
@@ -2063,6 +2069,13 @@ class MainWindow(QMainWindow):
         self._journey_completion_ratio: float = 0.0
         self._journey_map_dialog: Optional[QDialog] = None
         self._journey_map_dialog_route_key = ()
+        self._journey_pip_window: Optional[FocusJourneyPiPWindow] = None
+        self._journey_pip_hidden_for_session: bool = False
+        self._journey_pip_progress_key = ()
+        self._journey_waiting_for_boarding: bool = False
+        self._journey_calibration_reset_done: bool = True
+        self._journey_session_id: int = 0
+        self._validation_session_id: str = ""
         self._deep_focus_active: bool = False
         self._before_break_snapshot: dict = {}      # snapshot before each break for recovery validation
         self._break_snapshots: list = []            # list of {before, after, transfer_score}
@@ -2070,6 +2083,9 @@ class MainWindow(QMainWindow):
         # Startup calibration and score smoothing to avoid early score drops.
         self._analysis_warmup_seconds = max(3.0, float(self.config.get("analysis_warmup_seconds", 12.0)))
         self._analysis_started_at = 0.0
+        self._initial_baseline_samples: list[Dict[str, Any]] = []
+        self._initial_session_baseline: Dict[str, Any] = {}
+        self._initial_baseline_finalized = False
         self._display_score = 100.0
         self._score_drop_speed_per_sec = max(1.0, float(self.config.get("score_drop_speed_per_sec", 2.6)))
         self._score_rise_speed_per_sec = max(
@@ -2083,6 +2099,7 @@ class MainWindow(QMainWindow):
         self._last_state_frame_timestamp: Optional[float] = None
 
         # Frameless-window edge resize support.
+        self._closing = False
         self._resize_border_px = 6
         app = QApplication.instance()
         if app is not None:
@@ -2782,6 +2799,8 @@ class MainWindow(QMainWindow):
             self.guidance_widget.update_theme(is_dark)
         if hasattr(self, "route_map_widget"):
             self.route_map_widget.set_theme(is_dark)
+        if hasattr(self, "_journey_pip_window") and self._journey_pip_window is not None:
+            self._journey_pip_window.update_theme(theme_mode)
         self.score_widget.update_theme(is_dark)
         self.stats_widget.apply_theme(is_dark)
         if hasattr(self, "trend_widget") and hasattr(self.trend_widget, "sparkline"):
@@ -2981,12 +3000,19 @@ class MainWindow(QMainWindow):
         self._session_state_segments: list[Dict[str, Any]] = []
         self._session_eye_metric_seconds = 0.0
         self._last_state_frame_timestamp = None
+        self._initial_baseline_samples = []
+        self._initial_session_baseline = {}
+        self._initial_baseline_finalized = False
 
         self._session_context_payload = {}
         self._session_exit_payload = {}
         self._session_route_payload = {}
         self._journey_phase_end = "Boarding"
         self._journey_completion_ratio = 0.0
+        self._journey_waiting_for_boarding = False
+        self._journey_calibration_reset_done = True
+        self._journey_session_id = 0
+        self._validation_session_id = ""
         self._session_checkins = []
         self._checkin_timestamps = []
         self._last_checkin_at = 0.0
@@ -3051,14 +3077,216 @@ class MainWindow(QMainWindow):
         elif features.eye_closure_level is not None and float(features.eye_closure_level) >= 0.8:
             self._session_perclos_frames += 1
 
+    @staticmethod
+    def _median_float(values: list[Any]) -> Optional[float]:
+        clean: list[float] = []
+        for value in values:
+            try:
+                if value is None or value == "":
+                    continue
+                clean.append(float(value))
+            except (TypeError, ValueError):
+                continue
+        if not clean:
+            return None
+        clean.sort()
+        mid = len(clean) // 2
+        if len(clean) % 2:
+            return float(clean[mid])
+        return float((clean[mid - 1] + clean[mid]) / 2.0)
+
+    @staticmethod
+    def _mean_float(values: list[Any]) -> Optional[float]:
+        clean: list[float] = []
+        for value in values:
+            try:
+                if value is None or value == "":
+                    continue
+                clean.append(float(value))
+            except (TypeError, ValueError):
+                continue
+        if not clean:
+            return None
+        return float(sum(clean) / len(clean))
+
+    @staticmethod
+    def _clamped_ratio(value: float, low: float = 0.0, high: float = 1.0) -> float:
+        try:
+            return max(low, min(high, float(value)))
+        except (TypeError, ValueError):
+            return low
+
+    def _record_initial_session_baseline_sample(
+        self,
+        *,
+        features: FrameFeatures,
+        score: float,
+        state: FocusState,
+        state_info: Dict[str, Any],
+        lighting: str,
+        frame_timestamp: float,
+    ) -> None:
+        """Collect the first stable seconds as a within-session reference point."""
+        if (
+            not self.camera_running
+            or not self._is_initial_analysis_phase()
+            or bool(getattr(self, "_journey_waiting_for_boarding", False))
+            or bool(getattr(self, "_initial_baseline_finalized", False))
+        ):
+            return
+
+        summary = state_info.get("behavior_summary", {}) if isinstance(state_info, dict) else {}
+        if not isinstance(summary, dict):
+            summary = {}
+        sample = {
+            "timestamp": float(frame_timestamp),
+            "work_readiness": float(max(0.0, min(100.0, float(score or 0.0)))),
+            "raw_state": state.name,
+            "confidence": float(state_info.get("confidence", 0.0) or 0.0),
+            "fatigue_index": float(summary.get("fatigue_index", 0.0) or 0.0),
+            "distraction_risk": float(summary.get("distraction_risk", 0.0) or 0.0),
+            "engagement_index": float(summary.get("engagement_index", 0.0) or 0.0),
+            "confidence_index": float(summary.get("confidence_index", 0.0) or 0.0),
+            "face_present": bool(features.face_detected),
+            "vision_confidence": float(features.vision_confidence or 0.0),
+            "camera_quality": str(lighting or ""),
+            "ear_avg": features.ear_avg,
+            "eye_closure_level": features.eye_closure_level,
+            "perclos_ratio": features.perclos_ratio,
+            "head_pitch": features.head_pitch,
+            "head_yaw": features.head_yaw,
+            "head_roll": features.head_roll,
+            "hand_write_score": float(features.hand_write_score or 0.0),
+            "phone_present": bool(features.phone_present),
+        }
+        self._initial_baseline_samples.append(sample)
+        if len(self._initial_baseline_samples) > 240:
+            self._initial_baseline_samples = self._initial_baseline_samples[-240:]
+
+    def _finalize_initial_session_baseline(self, finished_at: Optional[float] = None) -> Dict[str, Any]:
+        """Summarize warmup samples into a start-of-session behavioral baseline."""
+        if bool(getattr(self, "_initial_baseline_finalized", False)):
+            return dict(getattr(self, "_initial_session_baseline", {}) or {})
+
+        self._initial_baseline_finalized = True
+        samples = list(getattr(self, "_initial_baseline_samples", []) or [])
+        if not samples:
+            self._initial_session_baseline = {
+                "initial_baseline_available": False,
+                "initial_baseline_quality": 0.0,
+                "initial_baseline_samples": 0,
+            }
+            return dict(self._initial_session_baseline)
+
+        started_at = float(samples[0].get("timestamp", time.time()) or time.time())
+        ended_at = float(finished_at if finished_at is not None else samples[-1].get("timestamp", time.time()))
+        duration = max(0.0, ended_at - started_at)
+        face_ratio = sum(1 for item in samples if bool(item.get("face_present"))) / max(1, len(samples))
+        phone_ratio = sum(1 for item in samples if bool(item.get("phone_present"))) / max(1, len(samples))
+        vision_conf = self._median_float([item.get("vision_confidence") for item in samples]) or 0.0
+        duration_ratio = self._clamped_ratio(duration / max(1.0, float(self._analysis_warmup_seconds)))
+        sample_ratio = self._clamped_ratio(len(samples) / 10.0)
+        quality = self._clamped_ratio(
+            (face_ratio * 0.42) + (vision_conf * 0.34) + (duration_ratio * 0.16) + (sample_ratio * 0.08)
+        )
+
+        state_counts: Dict[str, int] = {}
+        for item in samples:
+            state_name = str(item.get("raw_state", "") or "")
+            if state_name:
+                state_counts[state_name] = state_counts.get(state_name, 0) + 1
+        dominant_state = max(state_counts.items(), key=lambda pair: pair[1])[0] if state_counts else ""
+
+        self._initial_session_baseline = {
+            "initial_baseline_available": True,
+            "initial_baseline_quality": round(float(quality), 4),
+            "initial_baseline_samples": int(len(samples)),
+            "initial_baseline_duration_seconds": round(float(duration), 2),
+            "initial_baseline_started_at": datetime.fromtimestamp(started_at).isoformat(timespec="seconds"),
+            "initial_baseline_finished_at": datetime.fromtimestamp(ended_at).isoformat(timespec="seconds"),
+            "initial_work_readiness": self._median_float([item.get("work_readiness") for item in samples]),
+            "initial_fatigue_index": self._median_float([item.get("fatigue_index") for item in samples]),
+            "initial_distraction_risk": self._median_float([item.get("distraction_risk") for item in samples]),
+            "initial_engagement_index": self._median_float([item.get("engagement_index") for item in samples]),
+            "initial_confidence_index": self._median_float([item.get("confidence_index") for item in samples]),
+            "initial_camera_confidence": round(float(vision_conf), 4),
+            "initial_face_presence_ratio": round(float(face_ratio), 4),
+            "initial_phone_presence_ratio": round(float(phone_ratio), 4),
+            "initial_eye_open_baseline": self._median_float([
+                item.get("ear_avg") for item in samples
+                if item.get("ear_avg") not in (None, "") and not bool(item.get("phone_present"))
+            ]),
+            "initial_eye_closure_baseline": self._median_float([item.get("eye_closure_level") for item in samples]),
+            "initial_perclos_ratio": self._median_float([item.get("perclos_ratio") for item in samples]),
+            "initial_head_pitch": self._median_float([item.get("head_pitch") for item in samples]),
+            "initial_head_yaw": self._median_float([item.get("head_yaw") for item in samples]),
+            "initial_head_roll": self._median_float([item.get("head_roll") for item in samples]),
+            "initial_hand_write_score": self._median_float([item.get("hand_write_score") for item in samples]),
+            "initial_dominant_raw_state": dominant_state,
+        }
+        logger.info(
+            "Initial session baseline captured: samples=%s quality=%.2f readiness=%s",
+            len(samples),
+            quality,
+            self._initial_session_baseline.get("initial_work_readiness"),
+        )
+        return dict(self._initial_session_baseline)
+
+    def _initial_baseline_delta_fields(
+        self,
+        *,
+        work_readiness: Optional[float] = None,
+        fatigue_index: Optional[float] = None,
+        distraction_risk: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Return flat fields comparing current signals to the session-start baseline."""
+        baseline = dict(getattr(self, "_initial_session_baseline", {}) or {})
+        if not baseline.get("initial_baseline_available"):
+            return {}
+
+        fields: Dict[str, Any] = {
+            "initial_work_readiness": baseline.get("initial_work_readiness"),
+            "initial_fatigue_index": baseline.get("initial_fatigue_index"),
+            "initial_distraction_risk": baseline.get("initial_distraction_risk"),
+            "initial_baseline_quality": baseline.get("initial_baseline_quality"),
+        }
+
+        initial_wr = baseline.get("initial_work_readiness")
+        if initial_wr not in (None, "") and work_readiness is not None:
+            current_wr = float(work_readiness)
+            initial_wr_float = float(initial_wr)
+            fields["readiness_delta_from_start"] = round(current_wr - initial_wr_float, 3)
+            if initial_wr_float > 1e-6:
+                fields["recovery_to_initial_ratio"] = round(self._clamped_ratio(current_wr / initial_wr_float, 0.0, 1.5), 4)
+
+        initial_fatigue = baseline.get("initial_fatigue_index")
+        if initial_fatigue not in (None, "") and fatigue_index is not None:
+            fields["fatigue_delta_from_start"] = round(float(fatigue_index) - float(initial_fatigue), 4)
+
+        initial_distraction = baseline.get("initial_distraction_risk")
+        if initial_distraction not in (None, "") and distraction_risk is not None:
+            fields["distraction_delta_from_start"] = round(float(distraction_risk) - float(initial_distraction), 4)
+
+        return fields
+
     def _is_initial_analysis_phase(self) -> bool:
         """Return True while the startup calibration window is still active."""
-        if not self.camera_running or self._analysis_started_at <= 0.0:
+        if not self.camera_running:
+            return False
+        if bool(getattr(self, "_journey_waiting_for_boarding", False)):
+            return True
+        session_start = getattr(self, "session_started_at", None)
+        if session_start is not None and time.time() < float(session_start):
+            return True
+        if self._analysis_started_at <= 0.0:
             return False
         return (time.time() - self._analysis_started_at) < self._analysis_warmup_seconds
 
     def _analysis_seconds_left(self) -> int:
         """Return rounded-up remaining warmup seconds."""
+        session_start = getattr(self, "session_started_at", None)
+        if session_start is not None and time.time() < float(session_start):
+            return int(math.ceil(max(0.0, float(session_start) - time.time())))
         if self._analysis_started_at <= 0.0:
             return 0
         elapsed = time.time() - self._analysis_started_at
@@ -3533,9 +3761,17 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             logger.debug("Failed to build task context summary: %s", exc)
 
+        initial_baseline = dict(getattr(self, "_initial_session_baseline", {}) or {})
+        baseline_deltas = self._initial_baseline_delta_fields(
+            work_readiness=avg_score_raw,
+            fatigue_index=None,
+            distraction_risk=None,
+        )
+
         session_record = {
             "timestamp": int(time.time()),
             "profile_name": self.profile_name,
+            "session_id": str(getattr(self, "_validation_session_id", "") or getattr(self, "_journey_session_id", "")),
             "session_seconds": session_seconds,
             "focus_seconds": float(self.raw_focus_time),
             "focus_seconds_display": float(self.focus_time),
@@ -3576,6 +3812,12 @@ class MainWindow(QMainWindow):
             "journey_phase_end": str(getattr(self, "_journey_phase_end", "") or ""),
             "session_exit": dict(self._session_exit_payload or {}),
             "checkins": list(self._session_checkins or []),
+            "initial_session_baseline": dict(initial_baseline),
+            "initial_work_readiness": baseline_deltas.get("initial_work_readiness"),
+            "readiness_delta_from_start": baseline_deltas.get("readiness_delta_from_start"),
+            "initial_fatigue_index": baseline_deltas.get("initial_fatigue_index"),
+            "initial_distraction_risk": baseline_deltas.get("initial_distraction_risk"),
+            "initial_baseline_quality": baseline_deltas.get("initial_baseline_quality"),
             "task_context_summary": dict(task_context_summary or {}),
             "task_alignment_avg": float(task_context_summary.get("task_alignment_ratio", 0.0) or 0.0),
             "digital_distraction_risk_avg": float(task_context_summary.get("risk_score", 0.0) or 0.0),
@@ -3710,12 +3952,18 @@ class MainWindow(QMainWindow):
             self._session_planned_minutes = pending_planned_minutes
             self._break_snapshots = []
             self._before_break_snapshot = {}
-            self.session_started_at = time.time()
-            self._analysis_started_at = self.session_started_at
+            self._journey_pip_hidden_for_session = False
+            self._journey_pip_progress_key = ()
+            self._journey_waiting_for_boarding = True
+            self._journey_calibration_reset_done = True
+            self._journey_session_id = int(time.time())
+            self._validation_session_id = f"{self.profile_name}:{self._journey_session_id}"
+            self.session_started_at = None
+            self._analysis_started_at = 0.0
             self._session_paused = False
             self._pause_started_at = 0.0
             self._paused_total_seconds = 0.0
-            self.last_break_time = self.session_started_at
+            self.last_break_time = time.time()
 
             # Activate deep focus mode if requested
             self._deep_focus_active = (self._session_mode == "deep")
@@ -3763,6 +4011,7 @@ class MainWindow(QMainWindow):
         if self.camera is not None:
             self.camera.stop()
         self.camera_running = False
+        self._hide_journey_pip()
         self._analysis_started_at = 0.0
         self._display_score = 100.0
         self.display_state = FocusState.UNCERTAIN
@@ -3988,6 +4237,14 @@ class MainWindow(QMainWindow):
             state = self.engine.process_frame(features)
             score = self.engine.focus_score
             state_info = self.engine.get_state_info()
+            self._record_initial_session_baseline_sample(
+                features=features,
+                score=score,
+                state=state,
+                state_info=state_info,
+                lighting=lighting_quality,
+                frame_timestamp=timestamp,
+            )
             # Update UI
             display_state, display_confidence, display_reason = self._update_state(
                 state,
@@ -3995,6 +4252,17 @@ class MainWindow(QMainWindow):
                 state_info,
                 frame_timestamp=timestamp,
                 elapsed_seconds=elapsed_seconds,
+            )
+            self._record_validation_state_prediction(
+                raw_state=state,
+                display_state=display_state,
+                score=score,
+                confidence=display_confidence,
+                reason=display_reason,
+                features=features,
+                lighting=lighting_quality,
+                state_info=state_info,
+                timestamp=timestamp,
             )
 
             # Draw overlays on frame
@@ -4064,7 +4332,7 @@ class MainWindow(QMainWindow):
         if self._is_initial_analysis_phase():
             state = FocusState.UNCERTAIN
             state_confidence = 0.0
-            state_reason = "Đang hiệu chỉnh dữ liệu ban đầu"
+            state_reason = "Đang lấy mốc đầu phiên"
 
         # Draw subtle state-colored frame
         color = STATE_COLORS.get(state, "#607D8B")
@@ -4162,10 +4430,14 @@ class MainWindow(QMainWindow):
             }
 
         if self._is_initial_analysis_phase():
-            chip_text = "Đang hiệu chỉnh"
             chip_bg, chip_fg, chip_border = palette["warmup"]
-            seconds_left = self._analysis_seconds_left()
-            hint_text = f"Giữ điểm ổn định trong {seconds_left}s để hệ thống lấy baseline ban đầu."
+            if bool(getattr(self, "_journey_waiting_for_boarding", False)):
+                chip_text = "Boarding"
+                hint_text = "Xé vé trong Focus Journey để bắt đầu hiệu chỉnh."
+            else:
+                chip_text = "Lấy mốc đầu phiên"
+                seconds_left = self._analysis_seconds_left()
+                hint_text = f"Giữ tư thế làm việc tự nhiên trong {seconds_left}s để hệ thống lấy mốc đầu phiên."
         elif (
             "đang giữ trạng thái ổn định" in reason.lower()
             or "tín hiệu tạm thời chưa rõ" in reason.lower()
@@ -4298,11 +4570,18 @@ class MainWindow(QMainWindow):
 
         in_warmup = self._is_initial_analysis_phase()
         now_ts = frame_timestamp
+        if not in_warmup and not bool(getattr(self, "_journey_calibration_reset_done", True)):
+            self._finalize_initial_session_baseline(frame_timestamp)
+            self._journey_calibration_reset_done = True
+            self._session_total_frames = 0
+            self._session_face_detected_frames = 0
+            self._last_state_frame_timestamp = frame_timestamp
+            elapsed_seconds = 0.0
 
         effective_state = FocusState.UNCERTAIN if in_warmup else state
         effective_score = self._compute_display_score(score)
         effective_confidence = 0.0 if in_warmup else raw_confidence
-        effective_reason = "Đang hiệu chỉnh dữ liệu ban đầu" if in_warmup else raw_reason
+        effective_reason = "Đang lấy mốc đầu phiên" if in_warmup else raw_reason
 
         if not in_warmup:
             if state in (FocusState.ON_SCREEN_READING, FocusState.OFFSCREEN_WRITING):
@@ -4479,6 +4758,60 @@ class MainWindow(QMainWindow):
 
         self.score_changed.emit(effective_score)
         return effective_state, effective_confidence, effective_reason
+
+    def _record_validation_state_prediction(
+        self,
+        *,
+        raw_state: FocusState,
+        display_state: FocusState,
+        score: float,
+        confidence: float,
+        reason: str,
+        features: FrameFeatures,
+        lighting: str,
+        state_info: Dict[str, Any],
+        timestamp: float,
+    ) -> None:
+        """Persist low-frequency app-state samples for observer-label evaluation."""
+        if not bool(self.config.get("enable_validation_logging", True)):
+            return
+        if self._is_initial_analysis_phase():
+            return
+        if timestamp - float(getattr(self, "_last_validation_prediction_at", 0.0) or 0.0) < 1.0:
+            return
+
+        self._last_validation_prediction_at = timestamp
+        summary = state_info.get("behavior_summary", {}) if isinstance(state_info, dict) else {}
+        if not isinstance(summary, dict):
+            summary = {}
+        fatigue_index = float(summary.get("fatigue_index", 0.0) or 0.0)
+        distraction_risk = float(summary.get("distraction_risk", 0.0) or 0.0)
+        baseline_fields = self._initial_baseline_delta_fields(
+            work_readiness=float(self.current_score),
+            fatigue_index=fatigue_index,
+            distraction_risk=distraction_risk,
+        )
+        try:
+            record = {
+                    "timestamp": timestamp,
+                    "session_id": str(getattr(self, "_validation_session_id", "") or getattr(self, "_journey_session_id", "")),
+                    "profile_name": str(self.profile_name or self._get_profile_name()),
+                    "app_state": display_state.name,
+                    "raw_state": raw_state.name,
+                    "display_state": display_state.name,
+                    "confidence": round(float(confidence or 0.0), 4),
+                    "work_readiness": round(float(self.current_score), 3),
+                    "raw_work_readiness": round(float(score or 0.0), 3),
+                    "face_present": bool(features.face_detected),
+                    "camera_quality": str(lighting or ""),
+                    "status_modifier": str(summary.get("status_modifier", "") or ""),
+                    "reason": str(reason or "")[:240],
+                    "elapsed_session_seconds": int(self.session_time_seconds),
+                }
+            record.update(baseline_fields)
+            self.validation_store.append_state_prediction(record)
+        except Exception as exc:
+            logger.debug("Failed to record validation state prediction: %s", exc)
 
     @staticmethod
     def _is_focused_state(state: FocusState) -> bool:
@@ -4670,13 +5003,13 @@ class MainWindow(QMainWindow):
             if not deep_focus:
                 self.guidance_widget.set_guidance(
                     mode="good",
-                    decision="Đang hiệu chỉnh ban đầu",
-                    detail=f"Dựa trên tín hiệu hành vi hiện tại, hệ thống đang hiệu chỉnh {seconds_left}s đầu và chưa dùng dữ liệu này để kết luận.",
-                    state_text="Đang thu thập baseline",
+                    decision="Đang lấy mốc đầu phiên",
+                    detail=f"Dựa trên tín hiệu hành vi hiện tại, hệ thống đang lấy mốc đầu phiên trong {seconds_left}s và chưa dùng dữ liệu này để kết luận.",
+                    state_text="Đang lấy mốc đầu phiên",
                 )
             if hasattr(self, "trend_widget") and not deep_focus:
                 self.trend_widget.set_insight(
-                    trend_text="Đang hiệu chỉnh",
+                    trend_text="Mốc đầu phiên",
                     trend_color="#9fd6ff" if is_dark else "#2f587f",
                     cycle_percent=0,
                     trend_values=[],
@@ -4801,14 +5134,17 @@ class MainWindow(QMainWindow):
         if self.camera_running:
             if getattr(self, "_session_paused", False):
                 return
-            if self.session_started_at is not None:
+            if bool(getattr(self, "_journey_waiting_for_boarding", False)):
+                self.session_time_seconds = 0
+            elif self.session_started_at is not None:
                 self.session_time_seconds = max(
                     0,
                     int(time.time() - self.session_started_at - float(getattr(self, "_paused_total_seconds", 0.0) or 0.0)),
                 )
             else:
-                self.session_time_seconds += 1
-            self._record_focus_sample(self.current_score)
+                self.session_time_seconds = 0
+            if self.session_time_seconds > 0 or not self._is_initial_analysis_phase():
+                self._record_focus_sample(self.current_score)
 
         avg_score_text = "0"
         if self.score_samples:
@@ -4851,6 +5187,13 @@ class MainWindow(QMainWindow):
             self._before_break_snapshot["distraction_risk"] = float(breakdown.get("distraction", 0.0) or 0.0)
         except Exception:
             pass
+        self._before_break_snapshot.update(
+            self._initial_baseline_delta_fields(
+                work_readiness=float(self._before_break_snapshot.get("work_readiness", self.current_score) or self.current_score),
+                fatigue_index=self._before_break_snapshot.get("fatigue_index"),
+                distraction_risk=self._before_break_snapshot.get("distraction_risk"),
+            )
+        )
 
         self.break_count += 1
         self.last_break_time = time.time()
@@ -4930,6 +5273,8 @@ class MainWindow(QMainWindow):
             dialog.set_paused(True)
         self._update_state_badge(self.display_state, float(self.current_score), "Tam dung phien tap trung.")
         self._refresh_journey_map_dialog()
+        self._update_journey_pip_data(force=True)
+        self._sync_journey_pip_visibility()
 
     def _resume_journey_session(self) -> None:
         if not bool(getattr(self, "camera_running", False)) or not bool(getattr(self, "_session_paused", False)):
@@ -4972,7 +5317,10 @@ class MainWindow(QMainWindow):
         payload["planned_minutes"] = planned_minutes
         if planned_minutes > 0:
             payload["route_duration_minutes"] = planned_minutes
-        payload["journey_session_id"] = int(float(self.session_started_at or 0.0))
+        payload["journey_session_id"] = int(
+            getattr(self, "_journey_session_id", 0)
+            or float(self.session_started_at or 0.0)
+        )
         return payload
 
     def _current_focus_journey_metrics(self) -> tuple[Dict[str, Any], float, int, int, str]:
@@ -4992,6 +5340,174 @@ class MainWindow(QMainWindow):
         distance_left = int(max(0, round(total_distance * (1.0 - progress))))
         phase = str(getattr(self, "_journey_phase_end", "") or self._journey_phase_from_progress(int(progress * 100)))
         return payload, progress, remaining_seconds, distance_left, phase
+
+    def _journey_pip_enabled(self) -> bool:
+        """Return whether the lightweight Journey PiP is allowed by config."""
+        return bool(self.config.get("enable_journey_pip", True))
+
+    def _ensure_journey_pip(self) -> FocusJourneyPiPWindow:
+        """Create the Journey PiP window lazily."""
+        if self._journey_pip_window is None:
+            self._journey_pip_window = FocusJourneyPiPWindow(
+                theme_mode=str(self.config.get("theme_mode", "dark"))
+            )
+            self._journey_pip_window.openRequested.connect(self._restore_from_journey_pip)
+            self._journey_pip_window.hiddenForSession.connect(self._hide_journey_pip_for_session)
+        return self._journey_pip_window
+
+    def _show_journey_pip(self) -> None:
+        """Show the compact Journey PiP without creating extra timers."""
+        if (
+            not self._journey_pip_enabled()
+            or not bool(getattr(self, "camera_running", False))
+            or bool(getattr(self, "_journey_pip_hidden_for_session", False))
+        ):
+            return
+
+        pip = self._ensure_journey_pip()
+        pip.update_theme(str(self.config.get("theme_mode", "dark")))
+        self._update_journey_pip_data(force=True)
+        pip.place_near_parent(self)
+        if not pip.isVisible():
+            pip.show()
+        pip.raise_()
+
+    def _hide_journey_pip(self) -> None:
+        """Hide PiP without changing the current session preference."""
+        pip = getattr(self, "_journey_pip_window", None)
+        if pip is not None and pip.isVisible():
+            pip.hide()
+
+    def _hide_journey_pip_for_session(self) -> None:
+        """User chose to hide PiP for this active session only."""
+        self._journey_pip_hidden_for_session = True
+        self._hide_journey_pip()
+
+    def _restore_from_journey_pip(self) -> None:
+        """Open the main app from PiP and hide the floating monitor."""
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        self._hide_journey_pip()
+
+    def _sync_journey_pip_visibility(self) -> None:
+        """Show PiP only while tracking is active and the main window is minimized/hidden."""
+        if bool(getattr(self, "_closing", False)) or not self._journey_pip_enabled():
+            self._hide_journey_pip()
+            return
+
+        if not bool(getattr(self, "camera_running", False)):
+            self._hide_journey_pip()
+            return
+
+        if bool(getattr(self, "_journey_pip_hidden_for_session", False)):
+            self._hide_journey_pip()
+            return
+
+        minimized = bool(self.windowState() & Qt.WindowState.WindowMinimized) or self.isMinimized()
+        hidden_to_tray = not self.isVisible()
+        if minimized or hidden_to_tray:
+            self._show_journey_pip()
+        else:
+            self._hide_journey_pip()
+
+    def _update_journey_pip_data(
+        self,
+        *,
+        payload: Optional[Dict[str, Any]] = None,
+        progress: Optional[float] = None,
+        remaining_seconds: Optional[int] = None,
+        phase: Optional[str] = None,
+        status_text: str = "",
+        force: bool = False,
+    ) -> None:
+        """Push current Journey values into PiP if the window exists."""
+        pip = getattr(self, "_journey_pip_window", None)
+        if pip is None:
+            return
+
+        if payload is None or progress is None or remaining_seconds is None or phase is None:
+            payload, progress, remaining_seconds, _distance_left, phase = self._current_focus_journey_metrics()
+
+        status = "Tạm dừng" if bool(getattr(self, "_session_paused", False)) else str(status_text or "")
+        route_from = str(
+            (payload or {}).get("route_from_code")
+            or (payload or {}).get("from_code")
+            or ""
+        )
+        route_to = str(
+            (payload or {}).get("route_to_code")
+            or (payload or {}).get("to_code")
+            or ""
+        )
+        progress_key = (
+            route_from,
+            route_to,
+            int(round(float(progress or 0.0) * 1000)),
+            int(remaining_seconds or 0),
+            str(phase or ""),
+            status,
+            getattr(self.current_state, "name", str(self.current_state)),
+        )
+        if not force and progress_key == getattr(self, "_journey_pip_progress_key", ()):
+            return
+
+        pip.update_data(
+            route_from_code=route_from,
+            route_to_code=route_to,
+            progress=float(progress or 0.0),
+            remaining_seconds=int(remaining_seconds or 0),
+            phase=str(phase or "Boarding"),
+            status_text=status,
+            state=self.current_state,
+            payload=dict(payload or {}),
+        )
+        self._journey_pip_progress_key = progress_key
+
+    def _begin_journey_measurement_after_boarding(self) -> None:
+        """Start calibration and the session clock only after the ticket is torn."""
+        if not bool(getattr(self, "camera_running", False)):
+            return
+
+        now = time.time()
+        warmup_seconds = max(0.0, float(getattr(self, "_analysis_warmup_seconds", 0.0) or 0.0))
+        self._journey_waiting_for_boarding = False
+        self._journey_calibration_reset_done = False
+        self._analysis_started_at = now
+        self._initial_baseline_samples = []
+        self._initial_session_baseline = {}
+        self._initial_baseline_finalized = False
+        self.session_started_at = now + warmup_seconds
+        self.session_time_seconds = 0
+        self._paused_total_seconds = 0.0
+        self._pause_started_at = 0.0
+        self.last_break_time = self.session_started_at
+        self._last_state_frame_timestamp = None
+        self._display_score = 100.0
+        self.current_score = 100.0
+        self.current_state = FocusState.UNCERTAIN
+        self.display_state = FocusState.UNCERTAIN
+        self.continuous_focus_time = 0.0
+        self.focus_time = 0.0
+        self.raw_focus_time = 0.0
+        self.score_samples = []
+        self.raw_score_samples = []
+        self.focus_trend_samples = []
+        self.raw_state_time_by_state = {state.name: 0.0 for state in FocusState}
+        self.state_time_by_state = {state.name: 0.0 for state in FocusState}
+        self._session_state_segments = []
+        self._session_focus_score_start = None
+        self._session_focus_score_end = None
+        self._session_fatigue_onset_seconds = None
+        if self.engine is not None:
+            self.engine.reset()
+
+        self.score_widget.set_score(100.0, FocusState.UNCERTAIN)
+        self._update_score_breakdown()
+        self._update_state_badge(FocusState.UNCERTAIN, 0.0, "Đang lấy mốc đầu phiên sau check-in.")
+        self._update_journey_widget()
+        self._refresh_journey_map_dialog(force_route=True)
+        self._update_journey_pip_data(force=True)
 
     def _open_journey_map_dialog(self) -> None:
         """Open the large flight-focus map for the selected journey."""
@@ -5014,6 +5530,8 @@ class MainWindow(QMainWindow):
                 parent=self,
             )
             self._journey_map_dialog.pauseRequested.connect(self._toggle_journey_pause)
+            if hasattr(self._journey_map_dialog, "boardingCompleted"):
+                self._journey_map_dialog.boardingCompleted.connect(self._begin_journey_measurement_after_boarding)
             self._journey_map_dialog_route_key = ()
             self._journey_map_dialog_progress_key = ()
 
@@ -5060,6 +5578,7 @@ class MainWindow(QMainWindow):
                 self.route_map_widget.show()
                 self.route_map_widget.update_route(self._session_route_payload, 0.0, 0, "Boarding", "ready")
             self._refresh_journey_map_dialog()
+            self._hide_journey_pip()
             return
 
         self.journey_widget.show()
@@ -5108,6 +5627,14 @@ class MainWindow(QMainWindow):
                 phase=route_phase,
                 status=route_status,
             )
+        self._update_journey_pip_data(
+            payload=self._current_focus_journey_payload(),
+            progress=self._journey_completion_ratio,
+            remaining_seconds=remaining,
+            phase=route_phase,
+            status_text=route_status,
+        )
+        self._sync_journey_pip_visibility()
         self._refresh_journey_map_dialog()
 
         self.journey_widget.update_journey(
@@ -5153,6 +5680,9 @@ class MainWindow(QMainWindow):
                 "session_seconds": int(before.get("session_seconds", self.session_time_seconds) or 0),
                 "fatigue_index": float(before.get("fatigue_index", 0.0) or 0.0),
                 "distraction_risk": float(before.get("distraction_risk", 0.0) or 0.0),
+                "initial_work_readiness": before.get("initial_work_readiness"),
+                "readiness_delta_from_start": before.get("readiness_delta_from_start"),
+                "initial_baseline_quality": before.get("initial_baseline_quality"),
             }
 
             dialog = FocusResetDialog(
@@ -5212,7 +5742,33 @@ class MainWindow(QMainWindow):
         snap["post_work_readiness"] = post_score
         snap["validated_at"] = now
         snap["validation_delay_minutes"] = max(0.0, (now - float(snap.get("timestamp", now) or now)) / 60.0)
+        initial_wr = snap.get("initial_work_readiness")
+        if initial_wr not in (None, ""):
+            initial_wr_float = float(initial_wr)
+            snap["post_readiness_delta_from_start"] = round(post_score - initial_wr_float, 3)
+            if initial_wr_float > 1e-6:
+                snap["recovery_to_initial_ratio"] = round(
+                    self._clamped_ratio(post_score / initial_wr_float, 0.0, 1.5),
+                    4,
+                )
+        return_state_seconds = dict(getattr(self, "state_time_by_state", {}) or {})
+        return_total_seconds = max(1.0, sum(float(v or 0.0) for v in return_state_seconds.values()))
+        return_stable_seconds = (
+            float(return_state_seconds.get("ON_SCREEN_READING", 0.0) or 0.0)
+            + float(return_state_seconds.get("OFFSCREEN_WRITING", 0.0) or 0.0)
+        )
+        snap["return_state_seconds"] = return_state_seconds
+        snap["return_work_stable_ratio"] = max(0.0, min(1.0, return_stable_seconds / return_total_seconds))
+        snap["return_distraction_count"] = int(getattr(self, "distraction_count", 0) or 0)
+        snap["return_drowsy_seconds"] = float(return_state_seconds.get("DROWSY_FATIGUE", 0.0) or 0.0)
+        snap["return_away_seconds"] = float(return_state_seconds.get("AWAY", 0.0) or 0.0)
         snap["transfer_score"] = self._compute_recovery_validation(snap, post_score)
+        snap["recovery_success"] = bool(
+            float(snap.get("return_work_stable_ratio", 0.0) or 0.0) >= 0.70
+            and post_score >= 60.0
+            and float(snap.get("return_drowsy_seconds", 0.0) or 0.0) <= 20.0
+            and float(snap.get("return_away_seconds", 0.0) or 0.0) <= 20.0
+        )
         snap["validation_status"] = "validated"
         self._persist_focus_reset_recovery_validation(snap)
 
@@ -5229,24 +5785,53 @@ class MainWindow(QMainWindow):
             timestamp = float(snap.get("timestamp", time.time()) or time.time())
             validated_at = float(snap.get("validated_at", time.time()) or time.time())
 
-            storage.append_recovery_validation({
+            recovery_record = {
                 "timestamp": datetime.fromtimestamp(timestamp).isoformat(timespec="seconds"),
                 "validated_at": datetime.fromtimestamp(validated_at).isoformat(timespec="seconds"),
+                "session_id": str(getattr(self, "_validation_session_id", "") or getattr(self, "_journey_session_id", "")),
+                "profile_name": str(self.profile_name or self._get_profile_name()),
                 "validation_delay_minutes": round(float(snap.get("validation_delay_minutes", 0.0) or 0.0), 2),
                 "pre_work_readiness": round(before_wr, 2),
                 "post_work_readiness": round(post_wr, 2),
                 "readiness_delta": round(post_wr - before_wr, 2),
+                "initial_work_readiness": snap.get("initial_work_readiness"),
+                "readiness_delta_from_start": snap.get("readiness_delta_from_start"),
+                "post_readiness_delta_from_start": snap.get("post_readiness_delta_from_start"),
+                "recovery_to_initial_ratio": snap.get("recovery_to_initial_ratio"),
+                "initial_fatigue_index": snap.get("initial_fatigue_index"),
+                "fatigue_delta_from_start": snap.get("fatigue_delta_from_start"),
+                "initial_distraction_risk": snap.get("initial_distraction_risk"),
+                "distraction_delta_from_start": snap.get("distraction_delta_from_start"),
+                "initial_baseline_quality": snap.get("initial_baseline_quality"),
+                "fatigue_index": round(float(snap.get("fatigue_index", 0.0) or 0.0), 4),
+                "distraction_risk": round(float(snap.get("distraction_risk", 0.0) or 0.0), 4),
                 "transfer_score": round(float(snap.get("transfer_score", 0.0) or 0.0), 4),
+                "recovery_success": bool(snap.get("recovery_success", False)),
                 "break_type": str(snap.get("break_type", "")),
                 "probe_completed": bool(game.get("probe_completed", False)),
                 "game_attention_score": game.get("game_attention_score"),
                 "attention_stability": game.get("attention_stability"),
                 "accuracy": game.get("accuracy"),
+                "avg_reaction_time_ms": game.get("avg_reaction_time_ms"),
+                "reaction_variability_ms": game.get("reaction_variability_ms"),
+                "omission_errors": game.get("omission_errors"),
+                "commission_errors": game.get("commission_errors"),
                 "self_report_ready": game.get("self_report_ready"),
                 "best_game": game.get("best_game"),
                 "weakest_game": game.get("weakest_game"),
                 "selected_games": list(game.get("selected_games", []) or []),
                 "game_scores": dict(game.get("game_scores", {}) or {}),
+                "return_work_stable_ratio": round(float(snap.get("return_work_stable_ratio", 0.0) or 0.0), 4),
+                "return_distraction_count": int(snap.get("return_distraction_count", 0) or 0),
+                "return_drowsy_seconds": round(float(snap.get("return_drowsy_seconds", 0.0) or 0.0), 2),
+                "return_away_seconds": round(float(snap.get("return_away_seconds", 0.0) or 0.0), 2),
+            }
+            storage.append_recovery_validation(recovery_record)
+            self.validation_store.append_scientific_event({
+                **recovery_record,
+                "timestamp": timestamp,
+                "timestamp_iso": recovery_record["timestamp"],
+                "event_type": "break_recovery",
             })
         except Exception as exc:
             logger.debug("Failed to persist recovery validation: %s", exc)
@@ -5686,6 +6271,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Handle window close."""
+        self._closing = True
+        self._hide_journey_pip()
         app = QApplication.instance()
         if app is not None:
             app.removeEventFilter(self)
@@ -5706,3 +6293,14 @@ class MainWindow(QMainWindow):
             return
 
         self._sync_title_bar_state()
+        QTimer.singleShot(0, self._sync_journey_pip_visibility)
+
+    def hideEvent(self, event):
+        """Show Journey PiP when the main window is hidden to tray during a session."""
+        super().hideEvent(event)
+        QTimer.singleShot(0, self._sync_journey_pip_visibility)
+
+    def showEvent(self, event):
+        """Hide Journey PiP when the main window is visible again."""
+        super().showEvent(event)
+        QTimer.singleShot(0, self._sync_journey_pip_visibility)

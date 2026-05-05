@@ -850,17 +850,35 @@ class FallbackJourneyMapWidget(QWidget):
         route = f"{self._model['from_code']} -> {self._model['to_code']}"
         remaining_minutes = int(math.ceil(max(0, self._remaining_seconds) / 60.0))
         painter.save()
-        painter.setPen(QColor("#f7fbff"))
+        title = f"{route}  {self._phase}".strip()
+        top_margin = 24.0
+        side_guard = 126.0 if rect.width() >= 760 else 70.0
+        title_rect = QRectF(side_guard, top_margin, max(120.0, rect.width() - side_guard * 2.0), 34.0)
         painter.setFont(QFont("Segoe UI", 15, QFont.Weight.DemiBold))
-        painter.drawText(QRectF(0, 24, rect.width(), 34), Qt.AlignmentFlag.AlignCenter, f"{route}  {self._phase}")
-        painter.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
-        painter.setPen(QColor(255, 255, 255, 178))
-        painter.drawText(QRectF(30, rect.bottom() - 150, 300, 28), "Time Remaining")
-        painter.drawText(QRectF(rect.right() - 330, rect.bottom() - 150, 300, 28), Qt.AlignmentFlag.AlignRight, "Distance Remaining")
-        painter.setFont(QFont("Segoe UI", 34, QFont.Weight.Bold))
-        painter.setPen(QColor("#ffffff"))
-        painter.drawText(QRectF(30, rect.bottom() - 118, 300, 80), f"{remaining_minutes} min")
-        painter.drawText(QRectF(rect.right() - 330, rect.bottom() - 118, 300, 80), Qt.AlignmentFlag.AlignRight, f"{self._distance_left_km} km")
+        painter.setPen(QPen(QColor(3, 10, 18, 180), 3.0))
+        painter.drawText(title_rect.translated(0, 1), Qt.AlignmentFlag.AlignCenter, title)
+        painter.setPen(QColor("#f7fbff"))
+        painter.drawText(title_rect, Qt.AlignmentFlag.AlignCenter, title)
+
+        if rect.height() >= 390 and rect.width() >= 650:
+            left_label = QRectF(rect.left() + 42, rect.bottom() - 150, 320, 28)
+            right_label = QRectF(rect.right() - 362, rect.bottom() - 150, 320, 28)
+            left_value = QRectF(rect.left() + 42, rect.bottom() - 118, 320, 80)
+            right_value = QRectF(rect.right() - 362, rect.bottom() - 118, 320, 80)
+            painter.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
+            painter.setPen(QColor(3, 10, 18, 160))
+            painter.drawText(left_label.translated(0, 1), "Time Remaining")
+            painter.drawText(right_label.translated(0, 1), Qt.AlignmentFlag.AlignRight, "Distance Remaining")
+            painter.setPen(QColor(255, 255, 255, 185))
+            painter.drawText(left_label, "Time Remaining")
+            painter.drawText(right_label, Qt.AlignmentFlag.AlignRight, "Distance Remaining")
+            painter.setFont(QFont("Segoe UI", 34, QFont.Weight.Bold))
+            painter.setPen(QColor(3, 10, 18, 170))
+            painter.drawText(left_value.translated(0, 2), f"{remaining_minutes} min")
+            painter.drawText(right_value.translated(0, 2), Qt.AlignmentFlag.AlignRight, f"{self._distance_left_km} km")
+            painter.setPen(QColor("#ffffff"))
+            painter.drawText(left_value, f"{remaining_minutes} min")
+            painter.drawText(right_value, Qt.AlignmentFlag.AlignRight, f"{self._distance_left_km} km")
         painter.restore()
 
 
@@ -1503,6 +1521,7 @@ class FocusJourneyMapDialog(QDialog):
     """Full map dialog opened from the Focus Journey card."""
 
     pauseRequested = pyqtSignal()
+    boardingCompleted = pyqtSignal()
 
     def __init__(
         self,
@@ -1515,6 +1534,7 @@ class FocusJourneyMapDialog(QDialog):
         self.config = config or {}
         self.audio_manager = audio_manager
         self._ticket_checked = False
+        self._awaiting_measurement_start = True
         self._pending_progress: Optional[tuple[float, int, int, str]] = None
         self._current_payload: Dict[str, Any] = {}
         self._map_window_maximized = False
@@ -1705,6 +1725,7 @@ class FocusJourneyMapDialog(QDialog):
         self._current_route_key = self._route_session_key(self._current_payload)
         stored_key = str(self.config.get("_focus_journey_checked_route_key", ""))
         self._ticket_checked = self._checked_route_key == self._current_route_key or stored_key == repr(self._current_route_key)
+        self._awaiting_measurement_start = True
         self._pending_progress = None
         self.map_widget.set_journey_data(data)
         model = build_journey_model(data)
@@ -1735,13 +1756,11 @@ class FocusJourneyMapDialog(QDialog):
         distance_left_km: int,
         phase: str = "",
     ) -> None:
+        safe_progress = max(0.0, min(1.0, float(progress or 0.0)))
+        safe_remaining = max(0, int(remaining_seconds or 0))
+        safe_distance = max(0, int(distance_left_km or 0))
+        safe_phase = str(phase or "Boarding")
         if not self._ticket_checked:
-            self._pending_progress = (
-                max(0.0, min(1.0, float(progress or 0.0))),
-                max(0, int(remaining_seconds or 0)),
-                max(0, int(distance_left_km or 0)),
-                str(phase or "Boarding"),
-            )
             model = build_journey_model(self._current_payload)
             self.map_widget.update_progress(
                 0.0,
@@ -1752,21 +1771,37 @@ class FocusJourneyMapDialog(QDialog):
             if hasattr(self.map_widget, "set_motion_paused"):
                 self.map_widget.set_motion_paused(True)
             return
-        self.map_widget.update_progress(progress, remaining_seconds, distance_left_km, phase)
 
-    def _complete_ticket_check(self) -> None:
-        self._ticket_checked = True
-        self._checked_route_key = self._current_route_key
-        self.config["_focus_journey_checked_route_key"] = repr(self._current_route_key)
-        pending = self._pending_progress
-        if pending is None:
+        if self._awaiting_measurement_start and safe_progress <= 0.0001:
             model = build_journey_model(self._current_payload)
-            pending = (
+            self.map_widget.update_progress(
                 0.0,
                 int(model.get("duration_minutes", 25) or 25) * 60,
                 int(model.get("distance_km", 0) or 0),
                 "Boarding",
             )
-        self.map_widget.update_progress(*pending)
+            if hasattr(self.map_widget, "set_motion_paused"):
+                self.map_widget.set_motion_paused(True)
+            return
+
+        self._awaiting_measurement_start = False
         if hasattr(self.map_widget, "set_motion_paused"):
             self.map_widget.set_motion_paused(self._paused)
+        self.map_widget.update_progress(safe_progress, safe_remaining, safe_distance, safe_phase)
+
+    def _complete_ticket_check(self) -> None:
+        self._ticket_checked = True
+        self._awaiting_measurement_start = True
+        self._checked_route_key = self._current_route_key
+        self.config["_focus_journey_checked_route_key"] = repr(self._current_route_key)
+        self._pending_progress = None
+        model = build_journey_model(self._current_payload)
+        self.map_widget.update_progress(
+            0.0,
+            int(model.get("duration_minutes", 25) or 25) * 60,
+            int(model.get("distance_km", 0) or 0),
+            "Boarding",
+        )
+        if hasattr(self.map_widget, "set_motion_paused"):
+            self.map_widget.set_motion_paused(True)
+        self.boardingCompleted.emit()

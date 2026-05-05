@@ -20,6 +20,12 @@ from ..vision.blink import BlinkConfig, BlinkDetector
 logger = logging.getLogger(__name__)
 
 
+MIN_PERSONALIZATION_SESSION_SECONDS = 10 * 60
+STRONG_PERSONALIZATION_SESSION_SECONDS = 15 * 60
+FULL_PERSONALIZATION_SESSION_SECONDS = 20 * 60
+MIN_COMPLETION_RATIO_FOR_STRONG_LEARNING = 0.60
+
+
 def _safe_float(value: Any) -> Optional[float]:
     try:
         if value is None:
@@ -36,6 +42,92 @@ def _clamp(value: float, low: float, high: float) -> float:
 def _blend(default_value: float, personalized_value: float, weight: float) -> float:
     w = _clamp(float(weight), 0.0, 1.0)
     return (default_value * (1.0 - w)) + (personalized_value * w)
+
+
+def science_informed_break_minutes(work_minutes: float, strain_level: float = 0.0) -> int:
+    """
+    Choose a conservative break length from work duration and observed strain.
+
+    This keeps short work blocks from learning very long breaks, while still
+    allowing longer recovery when fatigue/distraction signals are strong.
+    """
+    work = _clamp(float(work_minutes or 25.0), 15.0, 90.0)
+    strain = _clamp(float(strain_level or 0.0), 0.0, 1.0)
+
+    if work <= 20:
+        base = 4
+    elif work <= 30:
+        base = 5
+    elif work <= 45:
+        base = 7
+    else:
+        base = 10
+
+    if strain >= 0.70:
+        base += 3
+    elif strain >= 0.45:
+        base += 2
+    elif strain >= 0.25:
+        base += 1
+
+    ratio_cap = 0.42 if strain >= 0.65 else 0.34
+    cap = int(round(work * ratio_cap))
+    if work <= 20 and strain < 0.70:
+        cap = min(cap, 6)
+    if work <= 30 and strain < 0.45:
+        cap = min(cap, 8)
+
+    return int(_clamp(min(base, max(3, cap)), 3, 15))
+
+
+def session_personalization_weight(session: Dict[str, Any], duration_seconds: Optional[float] = None) -> float:
+    """
+    Return how much a session should influence personalization.
+
+    Sessions under 10 minutes are treated as history only. From 10-20 minutes
+    they are gradually trusted more; planned sessions stopped very early are
+    down-weighted instead of being allowed to dominate future schedules.
+    """
+    if duration_seconds is None:
+        duration_seconds = _safe_float(session.get("session_seconds_cleaned"))
+        if duration_seconds is None:
+            duration_seconds = _safe_float(session.get("session_seconds"))
+    duration = max(0.0, float(duration_seconds or 0.0))
+
+    if duration < MIN_PERSONALIZATION_SESSION_SECONDS:
+        return 0.0
+
+    if duration >= FULL_PERSONALIZATION_SESSION_SECONDS:
+        duration_weight = 1.0
+    else:
+        span = FULL_PERSONALIZATION_SESSION_SECONDS - MIN_PERSONALIZATION_SESSION_SECONDS
+        duration_weight = 0.25 + 0.75 * ((duration - MIN_PERSONALIZATION_SESSION_SECONDS) / max(1.0, span))
+        if duration >= STRONG_PERSONALIZATION_SESSION_SECONDS:
+            duration_weight = max(duration_weight, 0.65)
+
+    planned_minutes = _safe_float(session.get("planned_minutes"))
+    if planned_minutes is None or planned_minutes <= 0:
+        planned_minutes = _safe_float(session.get("work_interval_minutes_used"))
+
+    completion_weight = 1.0
+    if planned_minutes is not None and planned_minutes > 0:
+        completion_ratio = duration / max(1.0, float(planned_minutes) * 60.0)
+        stored_ratio = _safe_float(session.get("journey_completion_ratio"))
+        if stored_ratio is not None and stored_ratio > 0:
+            completion_ratio = min(completion_ratio, float(stored_ratio))
+
+        if completion_ratio < 0.45:
+            completion_weight = 0.25
+        elif completion_ratio < MIN_COMPLETION_RATIO_FOR_STRONG_LEARNING:
+            completion_weight = 0.55
+        elif completion_ratio < 0.75:
+            completion_weight = 0.80
+
+    return _clamp(duration_weight * completion_weight, 0.0, 1.0)
+
+
+def is_session_eligible_for_personalization(session: Dict[str, Any], duration_seconds: Optional[float] = None) -> bool:
+    return session_personalization_weight(session, duration_seconds) > 0.0
 
 
 def _trim_iqr_outliers(values: Sequence[float]) -> List[float]:
@@ -298,12 +390,16 @@ class UserBaselineStore:
     @staticmethod
     def _session_quality_weight(session: Dict[str, Any], duration_seconds: float) -> float:
         """Estimate per-session data quality for personalization updates."""
+        learning_weight = session_personalization_weight(session, duration_seconds)
+        if learning_weight <= 0.0:
+            return 0.0
+
         quality = _safe_float(session.get("session_quality_weight"))
         if quality is None:
             quality = _safe_float(session.get("analytics_quality_score"))
 
         if quality is not None:
-            return _clamp(float(quality), 0.12, 1.0)
+            return _clamp(float(quality), 0.12, 1.0) * learning_weight
 
         face_ratio = _safe_float(session.get("face_presence_ratio"))
         if face_ratio is None:
@@ -322,14 +418,14 @@ class UserBaselineStore:
         if (uncertain_raw or 0.0) > 1e-6:
             recovered_ratio = max(0.0, float(uncertain_raw - uncertain_cleaned)) / max(1e-6, float(uncertain_raw))
 
-        duration_score = _clamp(duration_seconds / 900.0, 0.0, 1.0)
+        duration_score = _clamp(duration_seconds / float(FULL_PERSONALIZATION_SESSION_SECONDS), 0.0, 1.0)
         quality_score = (
             (duration_score * 0.28)
             + (_clamp(float(face_ratio), 0.0, 1.0) * 0.42)
             + ((1.0 - _clamp(uncertain_ratio, 0.0, 1.0)) * 0.22)
             + (_clamp(recovered_ratio, 0.0, 1.0) * 0.08)
         )
-        return _clamp(quality_score, 0.12, 1.0)
+        return _clamp(quality_score, 0.12, 1.0) * learning_weight
 
     def load_baseline(self, profile_name: str) -> UserBaseline:
         path = self._baseline_path(profile_name)
@@ -374,16 +470,23 @@ class UserBaselineStore:
 
         valid_sessions: List[Dict[str, Any]] = []
         for session in sessions:
-            duration = _safe_float(session.get("session_seconds"))
-            if duration is not None and duration >= 60.0:
+            duration = _safe_float(session.get("session_seconds_cleaned"))
+            if duration is None:
+                duration = _safe_float(session.get("session_seconds"))
+            if duration is not None and is_session_eligible_for_personalization(session, duration):
                 valid_sessions.append(session)
 
         if not valid_sessions:
+            safe_work = int(_clamp(previous.recommended_work_minutes or default_work, 15, 60))
+            safe_break = min(
+                int(_clamp(previous.recommended_break_minutes or default_break, 3, 20)),
+                science_informed_break_minutes(safe_work, 0.0),
+            )
+            previous.recommended_work_minutes = safe_work
+            previous.recommended_break_minutes = safe_break
             if previous.session_count <= 0:
-                previous.recommended_work_minutes = int(_clamp(default_work, 15, 60))
-                previous.recommended_break_minutes = int(_clamp(default_break, 3, 20))
                 previous.personalization_weight = compute_personalization_weight(0)
-                self.save_baseline(previous)
+            self.save_baseline(previous)
             return previous
 
         recent = list(valid_sessions[-self.max_source_sessions:])
@@ -403,8 +506,13 @@ class UserBaselineStore:
         quality_weights: List[float] = []
 
         for session in recent:
-            duration = max(1.0, float(session.get("session_seconds", 1.0) or 1.0))
+            duration = max(
+                1.0,
+                float(session.get("session_seconds_cleaned", session.get("session_seconds", 1.0)) or 1.0),
+            )
             quality_weight = self._session_quality_weight(session, duration)
+            if quality_weight <= 0.0:
+                continue
             quality_weights.append(quality_weight)
 
             blink_rate = _safe_float(session.get("blink_rate_per_min"))
@@ -511,7 +619,10 @@ class UserBaselineStore:
         smoothed_fatigue = _blend(previous.average_fatigue_onset_minutes, fatigue_baseline, max(0.35, weight))
 
         work_default = int(_clamp(default_work, 15, 60))
-        break_default = int(_clamp(default_break, 3, 20))
+        break_default = min(
+            int(_clamp(default_break, 3, 20)),
+            science_informed_break_minutes(work_default, 0.0),
+        )
 
         work_personal = _robust_recent_center_weighted(
             work_minutes_used_samples,
@@ -525,9 +636,18 @@ class UserBaselineStore:
             break_minutes_used_samples,
             fallback=float(break_default),
         )
+        strain_level = 0.0
         if smoothed_distraction > 4.0 or smoothed_score < 68.0:
             break_personal += 1.5
-        break_minutes = int(round(_clamp(_blend(break_default, break_personal, max(0.25, weight)), 3, 20)))
+            strain_level += 0.25
+        if smoothed_distraction > 6.0 or smoothed_score < 58.0:
+            strain_level += 0.25
+        if smoothed_fatigue > 0.0 and smoothed_fatigue < max(18.0, work_minutes * 0.9):
+            strain_level += 0.25
+        if score_decay_baseline > 8.0:
+            strain_level += 0.20
+        break_cap = science_informed_break_minutes(work_minutes, strain_level)
+        break_minutes = int(round(_clamp(_blend(break_default, break_personal, max(0.25, weight)), 3, break_cap)))
 
         baseline = UserBaseline(
             profile_name=profile_name,

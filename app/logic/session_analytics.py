@@ -20,7 +20,10 @@ from .personalization import (
     PersonalizationManager,
     UserBaseline,
     UserBaselineStore,
+    is_session_eligible_for_personalization,
     personalization_stage,
+    science_informed_break_minutes,
+    session_personalization_weight,
 )
 
 logger = logging.getLogger(__name__)
@@ -470,6 +473,8 @@ class SessionAnalyticsStore:
             uncertain_seconds_cleaned=uncertain_seconds_cleaned,
         )
         session_quality_weight = self._clamp(0.15 + analytics_quality_score * 0.85, 0.12, 1.0)
+        personalization_weight = session_personalization_weight(raw, session_seconds)
+        session_quality_weight = session_quality_weight * personalization_weight
 
         cleaned = dict(raw)
         cleaned.update(
@@ -494,6 +499,8 @@ class SessionAnalyticsStore:
                 "uncertain_behavioral_seconds": float(uncertain_behavioral_seconds),
                 "analytics_quality_score": float(analytics_quality_score),
                 "session_quality_weight": float(session_quality_weight),
+                "personalization_eligible": bool(personalization_weight > 0.0),
+                "personalization_sample_weight": float(personalization_weight),
                 "face_presence_ratio": float(face_presence_ratio),
             }
         )
@@ -719,7 +726,10 @@ class SessionAnalyticsStore:
 
         valid = [
             s for s in sessions[-30:]
-            if float(s.get("session_seconds_cleaned", s.get("session_seconds", 0)) or 0) >= 300
+            if is_session_eligible_for_personalization(
+                s,
+                float(s.get("session_seconds_cleaned", s.get("session_seconds", 0)) or 0),
+            )
         ]
 
         if len(valid) < 5:
@@ -822,12 +832,15 @@ class SessionAnalyticsStore:
         plus user baseline and trends to choose personalized work/break timing.
         """
         default_work = int(max(15, min(60, default_work)))
-        default_break = int(max(3, min(20, default_break)))
+        default_break = min(
+            int(max(3, min(20, default_break))),
+            science_informed_break_minutes(default_work, 0.0),
+        )
 
         valid_sessions: List[Dict[str, Any]] = []
         for sess in sessions[-30:]:
             duration = float(sess.get("session_seconds_cleaned", sess.get("session_seconds", 0.0)) or 0.0)
-            if duration >= 5 * 60:
+            if is_session_eligible_for_personalization(sess, duration):
                 valid_sessions.append(sess)
 
         if not valid_sessions:
@@ -954,15 +967,19 @@ class SessionAnalyticsStore:
         else:
             work_minutes = 20
 
-        # Break duration based on fatigue/distraction pressure.
+        # Break duration follows observed strain, not a blind copy of previous breaks.
+        strain_level = 0.0
         if avg_distraction_per_hour > 6.0 or avg_score < 55:
-            break_minutes = 10
+            strain_level = max(strain_level, 0.75)
         elif avg_distraction_per_hour > 4.0 or avg_score < 65:
-            break_minutes = 8
+            strain_level = max(strain_level, 0.55)
         elif avg_distraction_per_hour > 2.5 or avg_score < 75:
-            break_minutes = 6
-        else:
-            break_minutes = 5
+            strain_level = max(strain_level, 0.32)
+
+        if score_trend <= -4.0:
+            strain_level = max(strain_level, 0.58)
+
+        break_minutes = science_informed_break_minutes(work_minutes, strain_level)
 
         work_minutes = int(max(15, min(60, work_minutes)))
         break_minutes = int(max(3, min(20, break_minutes)))
@@ -975,7 +992,15 @@ class SessionAnalyticsStore:
             personalization_weight = float(max(0.0, min(1.0, baseline.personalization_weight)))
 
             baseline_work = int(max(15, min(60, baseline.recommended_work_minutes)))
-            baseline_break = int(max(3, min(20, baseline.recommended_break_minutes)))
+            baseline_break_strain = 0.0
+            if baseline.average_distraction_density > 4.5 or baseline.average_focus_score_baseline < 70:
+                baseline_break_strain = max(baseline_break_strain, 0.45)
+            if baseline.focus_score_decay_per_hour > 8.0:
+                baseline_break_strain = max(baseline_break_strain, 0.55)
+            baseline_break = min(
+                int(max(3, min(20, baseline.recommended_break_minutes))),
+                science_informed_break_minutes(baseline_work, baseline_break_strain),
+            )
             anchor_weight = max(0.35, min(0.95, 0.18 + personalization_weight * 0.72))
 
             work_minutes = int(round((work_minutes * (1.0 - anchor_weight)) + (baseline_work * anchor_weight)))
@@ -987,16 +1012,20 @@ class SessionAnalyticsStore:
                 work_minutes = int(round((work_minutes * (1.0 - blend_weight)) + (fatigue_based_work * blend_weight)))
 
             if baseline.average_distraction_density > 4.5:
+                strain_level = max(strain_level, 0.50)
                 break_minutes += 1
             if baseline.average_focus_score_baseline < 70:
+                strain_level = max(strain_level, 0.48)
                 work_minutes -= 3
                 break_minutes += 1
 
             if baseline.focus_score_decay_per_hour > 8.0:
+                strain_level = max(strain_level, 0.55)
                 work_minutes -= 2
                 break_minutes += 1
 
             if score_trend <= -4.0:
+                strain_level = max(strain_level, 0.62)
                 work_minutes -= 4
                 break_minutes += 2
             elif score_trend >= 4.0 and avg_distraction_per_hour < 2.0:
@@ -1004,6 +1033,7 @@ class SessionAnalyticsStore:
                 break_minutes -= 1
 
             if avg_fatigue_onset > 0 and avg_fatigue_onset < 30:
+                strain_level = max(strain_level, 0.60)
                 work_minutes = min(work_minutes, int(round(avg_fatigue_onset * 0.85)))
                 break_minutes += 1
 
@@ -1017,19 +1047,22 @@ class SessionAnalyticsStore:
                 eye_fatigue_signals += 1
 
             if eye_fatigue_signals >= 2:
+                strain_level = max(strain_level, 0.68)
                 work_minutes -= 3
                 break_minutes += 2
 
             if avg_quality_score < 0.5:
                 work_minutes = min(work_minutes, baseline_work)
-                break_minutes = max(break_minutes, baseline_break)
+                break_minutes = max(break_minutes, min(baseline_break, science_informed_break_minutes(work_minutes, 0.45)))
 
         if minutes_since_last_break is not None:
             try:
                 break_minutes_since = max(0.0, float(minutes_since_last_break))
                 if break_minutes_since >= work_minutes * 0.75:
+                    strain_level = max(strain_level, 0.35)
                     break_minutes = max(break_minutes, 6)
                 if break_minutes_since >= work_minutes * 1.1:
+                    strain_level = max(strain_level, 0.55)
                     break_minutes = max(break_minutes, 8)
                     work_minutes = min(work_minutes, int(round(default_work * 0.92)))
             except (TypeError, ValueError):
@@ -1038,14 +1071,23 @@ class SessionAnalyticsStore:
         # Digital-context pressure: shorten work interval when task alignment is low
         # or when digital distraction / context switching is high.
         if avg_digital_risk >= 0.65 or avg_task_alignment < 0.45:
+            strain_level = max(strain_level, 0.60)
             work_minutes -= 5
             break_minutes += 2
         elif avg_digital_risk >= 0.45 or avg_context_switches_per_hour >= 18:
+            strain_level = max(strain_level, 0.45)
             work_minutes -= 3
             break_minutes += 1
 
+        if len(valid_sessions) < 5:
+            history_weight = self._clamp(len(valid_sessions) / 5.0, 0.15, 0.85)
+            work_minutes = int(round((default_work * (1.0 - history_weight)) + (work_minutes * history_weight)))
+            break_minutes = int(round((default_break * (1.0 - history_weight)) + (break_minutes * history_weight)))
+            strain_level *= max(0.35, history_weight)
+
         work_minutes = int(max(15, min(60, work_minutes)))
-        break_minutes = int(max(3, min(20, break_minutes)))
+        break_cap = science_informed_break_minutes(work_minutes, strain_level)
+        break_minutes = int(max(3, min(break_cap, break_minutes)))
 
         confidence = min(
             1.0,
