@@ -1,51 +1,37 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-FocusGuardian PyInstaller Spec File
+FocusGuardian PyInstaller one-file spec.
 
-Build Windows executable with:
-    pyinstaller app.spec
-
-Output will be in dist/FocusGuardian/
+Build Windows standalone executable with:
+    pyinstaller --distpath dist-onefile app_onefile.spec
 """
 
-import sys
 from pathlib import Path
 
-# Analysis settings
 block_cipher = None
-
-# Get the root directory
 ROOT_DIR = Path(SPECPATH)
 
-# Collect data files
 datas = []
 
-# Include assets folder (nature sounds, icons, etc.)
 assets_dir = ROOT_DIR / 'assets'
 if assets_dir.exists():
     datas.append((str(assets_dir), 'assets'))
 
-# Include model files (CRITICAL for MediaPipe Tasks API)
 models_dir = ROOT_DIR / 'assets' / 'models'
 if models_dir.exists():
     for model_file in models_dir.glob('*.task'):
         datas.append((str(model_file), 'assets/models'))
 
-# Seed bundled EXE runtime with the app's configured cloud/profile settings.
 config_file = ROOT_DIR / 'config.json'
 if config_file.exists():
     datas.append((str(config_file), '.'))
 
-# Hidden imports that PyInstaller might miss
 hiddenimports = [
-    # PyQt6
     'PyQt6.QtCore',
     'PyQt6.QtGui',
     'PyQt6.QtNetwork',
     'PyQt6.QtWidgets',
     'PyQt6.sip',
-
-    # MediaPipe Tasks API
     'mediapipe',
     'mediapipe.tasks',
     'mediapipe.tasks.python',
@@ -54,22 +40,12 @@ hiddenimports = [
     'mediapipe.tasks.python.vision.hand_landmarker',
     'mediapipe.tasks.python.core',
     'mediapipe.tasks.python.components',
-
-    # OpenCV
     'cv2',
-
-    # Matplotlib is imported by some MediaPipe runtime paths
     'matplotlib',
     'matplotlib.pyplot',
     'matplotlib.backends.backend_agg',
-
-    # NumPy
     'numpy',
-
-    # Requests (for model download)
     'requests',
-
-    # App modules
     'app',
     'app.vision',
     'app.vision.vision_pipeline',
@@ -104,23 +80,14 @@ hiddenimports = [
     'app.focus_reset_game.ui_v2',
 ]
 
-# Collect MediaPipe data files (model files, etc.)
 try:
     from PyInstaller.utils.hooks import collect_data_files
-    mediapipe_datas = collect_data_files('mediapipe')
-    datas.extend(mediapipe_datas)
+
+    datas.extend(collect_data_files('mediapipe'))
+    datas.extend(collect_data_files('matplotlib'))
 except Exception:
     pass
 
-# Collect Matplotlib data files (mpl-data) required when imported at runtime.
-try:
-    from PyInstaller.utils.hooks import collect_data_files
-    matplotlib_datas = collect_data_files('matplotlib')
-    datas.extend(matplotlib_datas)
-except Exception:
-    pass
-
-# Main analysis
 a = Analysis(
     ['main.py'],
     pathex=[str(ROOT_DIR)],
@@ -145,47 +112,27 @@ a = Analysis(
     noarchive=False,
 )
 
-# Filter out unnecessary files
-def filter_binaries(binaries):
-    """Filter out unnecessary binary files."""
-    exclude_patterns = [
-        'api-ms-win',
-        'ucrtbase',
-        'VCRUNTIME',
-    ]
-    result = []
-    for name, path, type_ in binaries:
-        exclude = False
-        for pattern in exclude_patterns:
-            if pattern.lower() in name.lower():
-                exclude = True
-                break
-        if not exclude:
-            result.append((name, path, type_))
-    return result
-
-# Don't filter on Windows - these are needed
-# a.binaries = filter_binaries(a.binaries)
-
-# PYZ archive
 pyz = PYZ(
     a.pure,
     a.zipped_data,
-    cipher=block_cipher
+    cipher=block_cipher,
 )
 
-# EXE settings
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
     [],
-    exclude_binaries=True,
     name='FocusGuardian',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,  # No console window
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -193,16 +140,4 @@ exe = EXE(
     entitlements_file=None,
     icon=str(ROOT_DIR / 'assets' / 'icon.ico') if (ROOT_DIR / 'assets' / 'icon.ico').exists() else None,
     version='version_info.txt' if Path('version_info.txt').exists() else None,
-)
-
-# Collect all files
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='FocusGuardian'
 )

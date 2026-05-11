@@ -88,6 +88,13 @@ class CameraCapture:
         if self._running:
             logger.warning("Camera already running")
             return True
+        if self._thread and self._thread.is_alive():
+            logger.warning("Previous camera thread is still stopping")
+            self._thread.join(timeout=0.6)
+            if self._thread.is_alive():
+                self._state = CameraState.ERROR
+                return False
+            self._thread = None
 
         # Try to open camera
         try:
@@ -127,12 +134,26 @@ class CameraCapture:
         """Stop camera capture."""
         self._running = False
 
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2.0)
+        thread = self._thread
+        if thread and thread.is_alive():
+            thread.join(timeout=0.35)
 
-        if self._cap:
-            self._cap.release()
-            self._cap = None
+        cap = self._cap
+        self._cap = None
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception as exc:
+                logger.debug("Camera release error: %s", exc)
+
+        if thread and thread.is_alive():
+            thread.join(timeout=1.25)
+        if thread and not thread.is_alive():
+            self._thread = None
+
+        with self._frame_lock:
+            self._frame = None
+            self._processed_frame = None
 
         self._state = CameraState.STOPPED
         logger.info("Camera stopped")

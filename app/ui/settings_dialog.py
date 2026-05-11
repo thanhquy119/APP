@@ -52,6 +52,8 @@ ZALO_CONNECT_SUCCESS_TEXT = (
     "Bạn đã có thể nhận cảnh báo realtime từ ứng dụng."
 )
 ZALO_QR_EXACT_FILE = Path(__file__).resolve().parents[2] / "assets" / "zalo" / "oa_qr_exact.png"
+DEFAULT_ZALO_CONFIRM_SECONDS = 5
+DEFAULT_ZALO_COOLDOWN_MINUTES = 2
 
 
 class _ZaloChatIdFetchWorker(QObject):
@@ -294,19 +296,22 @@ class SettingsDialog(QDialog):
     """Refactored settings dialog with appearance/audio and Zalo tabs."""
 
     config_applied = pyqtSignal(dict)
+    baseline_reset_requested = pyqtSignal()
 
     def __init__(
         self,
         config: Optional[dict] = None,
         parent=None,
         focus_audio_manager: Optional[FocusAudioManager] = None,
+        personalization_status: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(parent)
         self.config = dict(config or {})
         self.focus_audio_manager = focus_audio_manager
-        self._theme_mode = str(self.config.get("theme_mode", "light")).strip().lower()
+        self._personalization_status = dict(personalization_status or {})
+        self._theme_mode = str(self.config.get("theme_mode", "dark")).strip().lower()
         if self._theme_mode not in {"dark", "light"}:
-            self._theme_mode = "light"
+            self._theme_mode = "dark"
 
         # Reuse the same root gradient token as MainWindow.
         self.setObjectName("appRoot")
@@ -335,6 +340,7 @@ class SettingsDialog(QDialog):
         self._apply_theme(self._theme_mode == "dark")
         self._init_ui()
         self._load_config()
+        self.set_personalization_status(self._personalization_status)
         self._connect_interactions()
         self._sync_control_states()
 
@@ -710,10 +716,34 @@ class SettingsDialog(QDialog):
         self.focus_audio_status_label.setWordWrap(True)
         audio_form.addRow("", self.focus_audio_status_label)
 
+        personalization_group = QGroupBox("Cá nhân hóa")
+        personalization_form = QFormLayout(personalization_group)
+
+        self.personalization_status_label = QLabel("Cá nhân hóa: Chưa đủ dữ liệu")
+        self.personalization_status_label.setObjectName("statusInfo")
+        self.personalization_status_label.setWordWrap(True)
+        personalization_form.addRow("", self.personalization_status_label)
+
+        self.personalization_sessions_label = QLabel("Phiên hợp lệ dùng cho baseline: 0")
+        self.personalization_sessions_label.setObjectName("sectionHint")
+        self.personalization_sessions_label.setWordWrap(True)
+        personalization_form.addRow("", self.personalization_sessions_label)
+
+        self.personalization_reset_btn = QPushButton("Đặt lại baseline")
+        self.personalization_reset_btn.setObjectName("ghostButton")
+        personalization_form.addRow("", self.personalization_reset_btn)
+
+        personalization_hint = QLabel(
+            "Khi thói quen thay đổi, đặt lại baseline sẽ để app học lại từ các phiên mới của hồ sơ hiện tại."
+        )
+        personalization_hint.setObjectName("sectionHint")
+        personalization_hint.setWordWrap(True)
+        personalization_form.addRow("", personalization_hint)
 
         root.setAlignment(Qt.AlignmentFlag.AlignTop)
         root.addWidget(group)
         root.addWidget(audio_group)
+        root.addWidget(personalization_group)
         return widget
 
     def _create_task_context_tab(self) -> QWidget:
@@ -887,6 +917,14 @@ class SettingsDialog(QDialog):
         action_row.addWidget(self.zalo_test_message_btn)
 
         form.addRow("", action_row)
+        confirm_label = form.labelForField(self.zalo_confirm_seconds_spin)
+        cooldown_label = form.labelForField(self.zalo_cooldown_minutes_spin)
+        if confirm_label is not None:
+            confirm_label.hide()
+        if cooldown_label is not None:
+            cooldown_label.hide()
+        self.zalo_confirm_seconds_spin.hide()
+        self.zalo_cooldown_minutes_spin.hide()
 
         self.zalo_status_label = QLabel(
             "Nhấn 'Kết nối với Zalo Bot' để mở QR và tự động lấy chat_id. Sau khi quét, hãy nhắn 'Hello' cho bot."
@@ -906,6 +944,7 @@ class SettingsDialog(QDialog):
         self.focus_audio_volume_spin.valueChanged.connect(self._on_focus_audio_volume_spin_changed)
         self.focus_audio_preview_btn.clicked.connect(self._preview_focus_audio)
         self.focus_audio_stop_btn.clicked.connect(self._stop_focus_audio)
+        self.personalization_reset_btn.clicked.connect(self._request_baseline_reset)
 
         self.enable_task_context_monitoring.toggled.connect(self._sync_control_states)
         self.task_context_checkin_enabled.toggled.connect(self._sync_control_states)
@@ -937,6 +976,33 @@ class SettingsDialog(QDialog):
         self.task_context_status_label.setText(text)
         self.task_context_status_label.style().unpolish(self.task_context_status_label)
         self.task_context_status_label.style().polish(self.task_context_status_label)
+
+    def set_personalization_status(self, status: Optional[Dict[str, Any]]) -> None:
+        """Refresh baseline status text shown in Settings."""
+        self._personalization_status = dict(status or {})
+        if not hasattr(self, "personalization_status_label"):
+            return
+
+        label = str(self._personalization_status.get("label", "") or "Chưa đủ dữ liệu")
+        eligible = int(self._personalization_status.get("eligible_sessions", 0) or 0)
+        confidence = float(self._personalization_status.get("confidence", 0.0) or 0.0)
+        self.personalization_status_label.setText(f"Cá nhân hóa: {label}")
+        self.personalization_sessions_label.setText(
+            f"Phiên hợp lệ dùng cho baseline: {eligible} · Độ tự tin khuyến nghị: {confidence:.0%}"
+        )
+
+    @pyqtSlot()
+    def _request_baseline_reset(self) -> None:
+        confirmed = NoticeDialog.confirm(
+            self,
+            "Đặt lại baseline cá nhân hóa",
+            "Chỉ baseline và khuyến nghị của hồ sơ hiện tại sẽ được đặt lại. Tài khoản, cài đặt app và lịch sử báo cáo vẫn được giữ.",
+            config=self.config,
+            confirm_text="Đặt lại baseline",
+            cancel_text="Hủy",
+        )
+        if confirmed:
+            self.baseline_reset_requested.emit()
 
     @staticmethod
     def _normalize_csv_value(raw: Any) -> str:
@@ -1196,10 +1262,10 @@ class SettingsDialog(QDialog):
             "zalo_bot_token": FIXED_ZALO_BOT_TOKEN,
             "zalo_chat_id": resolved_chat_id,
             "zalo_webhook_secret": str(self.config.get("zalo_webhook_secret", "") or ""),
-            "zalo_alert_threshold_seconds": int(self.zalo_confirm_seconds_spin.value()),
-            "zalo_distraction_confirm_seconds": int(self.zalo_confirm_seconds_spin.value()),
-            "zalo_alert_cooldown_minutes": int(self.zalo_cooldown_minutes_spin.value()),
-            "zalo_state_cooldown_seconds": int(self.zalo_cooldown_minutes_spin.value()) * 60,
+            "zalo_alert_threshold_seconds": DEFAULT_ZALO_CONFIRM_SECONDS,
+            "zalo_distraction_confirm_seconds": DEFAULT_ZALO_CONFIRM_SECONDS,
+            "zalo_alert_cooldown_minutes": DEFAULT_ZALO_COOLDOWN_MINUTES,
+            "zalo_state_cooldown_seconds": DEFAULT_ZALO_COOLDOWN_MINUTES * 60,
             "zalo_alert_on_distraction": bool(self.config.get("zalo_alert_on_distraction", True)),
             "zalo_alert_on_drowsy": bool(self.config.get("zalo_alert_on_drowsy", True)),
             "zalo_alert_on_phone": bool(self.config.get("zalo_alert_on_phone", True)),
@@ -1323,6 +1389,7 @@ class SettingsDialog(QDialog):
             client = ZaloBotClient(ZaloBotConfig.from_app_config(client_config))
             sent_ok, sent_detail, _ = client.send_message(self.config.get("zalo_chat_id"), ZALO_CONNECT_SUCCESS_TEXT)
 
+            self.config.update(client_config)
             self.config_applied.emit(dict(client_config))
 
             if sent_ok:
@@ -1339,6 +1406,9 @@ class SettingsDialog(QDialog):
         else:
             self._set_zalo_status(self._friendly_chat_id_fetch_error(message), level="error")
 
+        if success and chat_id:
+            self._set_zalo_status("Da ket noi Zalo Bot va da tu luu cai dat.", level="ok")
+
         self._sync_control_states()
 
     @pyqtSlot()
@@ -1347,7 +1417,7 @@ class SettingsDialog(QDialog):
         self._chat_id_fetch_thread = None
 
     def _load_config(self) -> None:
-        theme_mode = str(self.config.get("theme_mode", "light")).strip().lower()
+        theme_mode = str(self.config.get("theme_mode", "dark")).strip().lower()
         idx = self.theme_mode_combo.findData(theme_mode)
         self.theme_mode_combo.setCurrentIndex(idx if idx >= 0 else 0)
 
@@ -1464,7 +1534,7 @@ class SettingsDialog(QDialog):
                 zalo_confirm_seconds = legacy_zalo_threshold
         else:
             zalo_confirm_seconds = 5.0 if legacy_zalo_threshold >= 30.0 else legacy_zalo_threshold
-        self.zalo_confirm_seconds_spin.setValue(max(1, min(120, int(round(zalo_confirm_seconds)))))
+        self.zalo_confirm_seconds_spin.setValue(DEFAULT_ZALO_CONFIRM_SECONDS)
 
         try:
             cooldown_minutes = int(float(self.config.get("zalo_alert_cooldown_minutes", 10) or 0))
@@ -1475,7 +1545,7 @@ class SettingsDialog(QDialog):
                 cooldown_minutes = int(round(float(self.config.get("zalo_state_cooldown_seconds", cooldown_minutes * 60)) / 60.0))
             except (TypeError, ValueError):
                 pass
-        self.zalo_cooldown_minutes_spin.setValue(max(0, min(60, cooldown_minutes)))
+        self.zalo_cooldown_minutes_spin.setValue(DEFAULT_ZALO_COOLDOWN_MINUTES)
 
         self.enable_zalo_alerts.setChecked(bool(self.config.get("enable_zalo_alerts", False)))
         self.config["zalo_bot_token"] = FIXED_ZALO_BOT_TOKEN
@@ -1524,10 +1594,10 @@ class SettingsDialog(QDialog):
             "zalo_bot_token": FIXED_ZALO_BOT_TOKEN,
             "zalo_chat_id": str(self.config.get("zalo_chat_id", "") or "").strip(),
             "zalo_webhook_secret": str(self.config.get("zalo_webhook_secret", "") or ""),
-            "zalo_alert_threshold_seconds": int(self.zalo_confirm_seconds_spin.value()),
-            "zalo_distraction_confirm_seconds": int(self.zalo_confirm_seconds_spin.value()),
-            "zalo_alert_cooldown_minutes": int(self.zalo_cooldown_minutes_spin.value()),
-            "zalo_state_cooldown_seconds": int(self.zalo_cooldown_minutes_spin.value()) * 60,
+            "zalo_alert_threshold_seconds": DEFAULT_ZALO_CONFIRM_SECONDS,
+            "zalo_distraction_confirm_seconds": DEFAULT_ZALO_CONFIRM_SECONDS,
+            "zalo_alert_cooldown_minutes": DEFAULT_ZALO_COOLDOWN_MINUTES,
+            "zalo_state_cooldown_seconds": DEFAULT_ZALO_COOLDOWN_MINUTES * 60,
             "zalo_alert_on_distraction": bool(self.config.get("zalo_alert_on_distraction", True)),
             "zalo_alert_on_drowsy": bool(self.config.get("zalo_alert_on_drowsy", True)),
             "zalo_alert_on_phone": bool(self.config.get("zalo_alert_on_phone", True)),

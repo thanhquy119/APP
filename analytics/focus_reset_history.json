@@ -38,5 +38,153 @@
     "sequence_max_length": 5,
     "visual_accuracy": 100.0,
     "visual_miss_clicks": 0
+  },
+  {
+    "timestamp": "2026-04-29T12:07:19",
+    "baseline_rt_ms": 383.58,
+    "gonogo_rt_ms": 314.22,
+    "reaction_variability_ms": 80.39,
+    "accuracy": 94.59,
+    "commission_errors": 3,
+    "omission_errors": 1,
+    "focus_stability": 85.05,
+    "comparison": "Similar",
+    "best_game": "Visual Search",
+    "weakest_game": "Sequence Memory",
+    "score_gonogo": 83.67,
+    "score_sequence": 77.05,
+    "score_visual": 94.44,
+    "sequence_accuracy": 83.33,
+    "sequence_max_length": 5,
+    "visual_accuracy": 100.0,
+    "visual_miss_clicks": 0
+  },
+  {
+    "timestamp": "2026-05-02T18:08:01",
+    "baseline_rt_ms": 381.88,
+    "gonogo_rt_ms": 0.0,
+    "reaction_variability_ms": 130.38,
+    "accuracy": 55.56,
+    "commission_errors": 16,
+    "omission_errors": 22,
+    "focus_stability": 51.03,
+    "comparison": "Better",
+    "best_game": "Sequence Memory",
+    "weakest_game": "Flanker Arrows",
+    "score_gonogo": 0.0,
+    "score_stroop": 40.03,
+    "score_flanker": 36.01,
+    "score_sequence": 77.04,
+    "score_visual": 0.0,
+    "selected_games": [
+      "stroop",
+      "flanker",
+      "sequence"
+    ],
+    "sequence_accuracy": 83.33,
+    "sequence_max_length": 5,
+    "visual_accuracy": 0.0,
+    "visual_miss_clicks": 0,
+    "selected_game_titles": [
+      "Stroop màu",
+      "Mũi tên Flanker",
+      "Ghi nhớ chuỗi"
+    ]
+  },
+  {
+    "timestamp": "2026-05-02T18:16:12",
+    "baseline_rt_ms": 364.9,
+    "gonogo_rt_ms": 0.0,
+    "reaction_variability_ms": 100.1,
+    "accuracy": 94.44,
+    "commission_errors": 2,
+    "omission_errors": 1,
+    "focus_stability": 74.73,
+    "comparison": "Similar",
+    "best_game": "Flanker Arrows",
+    "weakest_game": "Sequence Memory",
+    "score_gonogo": 0.0,
+    "score_stroop": 71.97,
+    "score_flanker": 87.98,
+    "score_sequence": 64.23,
+    "score_visual": 0.0,
+    "selected_games": [
+      "stroop",
+      "flanker",
+      "sequence"
+    ],
+    "sequence_accuracy": 66.67,
+    "sequence_max_length": 5,
+    "visual_accuracy": 0.0,
+    "visual_miss_clicks": 0,
+    "selected_game_titles": [
+      "Stroop màu",
+      "Mũi tên Flanker",
+      "Ghi nhớ chuỗi"
+    ]
+  },
+  {
+    "timestamp": "2026-05-02T18:59:07",
+    "baseline_rt_ms": 0.0,
+    "gonogo_rt_ms": 0.0,
+    "reaction_variability_ms": 0.0,
+    "accuracy": 29.63,
+    "commission_errors": 0,
+    "omission_errors": 38,
+    "focus_stability": 26.93,
+    "comparison": "Similar",
+    "best_game": "Flanker Arrows",
+    "weakest_game": "Sequence Memory",
+    "score_gonogo": 0.0,
+    "score_stroop": 38.17,
+    "score_flanker": 42.61,
+    "score_sequence": 0.0,
+    "score_visual": 0.0,
+    "selected_games": [
+      "stroop",
+      "flanker",
+      "sequence"
+    ],
+    "sequence_accuracy": 0.0,
+    "sequence_max_length": 0,
+    "visual_accuracy": 0.0,
+    "visual_miss_clicks": 0,
+    "selected_game_titles": [
+      "Stroop màu",
+      "Mũi tên Flanker",
+      "Ghi nhớ chuỗi"
+    ]
+  },
+  {
+    "timestamp": "2026-05-02T19:03:39",
+    "baseline_rt_ms": 0.0,
+    "gonogo_rt_ms": 0.0,
+    "reaction_variability_ms": 179.33,
+    "accuracy": 33.33,
+    "commission_errors": 0,
+    "omission_errors": 36,
+    "focus_stability": 53.53,
+    "comparison": "Similar",
+    "best_game": "Sequence Memory",
+    "weakest_game": "Stroop Match",
+    "score_gonogo": 0.0,
+    "score_stroop": 33.39,
+    "score_flanker": 37.06,
+    "score_sequence": 90.14,
+    "score_visual": 0.0,
+    "selected_games": [
+      "flanker",
+      "stroop",
+      "sequence"
+    ],
+    "sequence_accuracy": 100.0,
+    "sequence_max_length": 5,
+    "visual_accuracy": 0.0,
+    "visual_miss_clicks": 0,
+    "selected_game_titles": [
+      "Mũi tên Flanker",
+      "Stroop màu",
+      "Ghi nhớ chuỗi"
+    ]
   }
 ]

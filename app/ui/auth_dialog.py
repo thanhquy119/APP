@@ -609,9 +609,16 @@ class AuthDialog(QDialog):
         self.form_status.show()
 
     def _is_auth_ready(self) -> bool:
-        if not bool(self.config.get("enable_google_sheets_sync", False)):
+        if not bool(self.config.get("enable_supabase_sync", False)):
             return False
-        if not str(self.config.get("google_sheets_id", "") or "").strip():
+        if not str(self.config.get("supabase_url", "") or "").strip():
+            return False
+        if not (
+            str(self.config.get("supabase_api_key", "") or "").strip()
+            or str(self.config.get("supabase_publishable_key", "") or "").strip()
+            or str(self.config.get("supabase_anon_key", "") or "").strip()
+            or str(self.config.get("supabase_service_role_key", "") or "").strip()
+        ):
             return False
         return True
 

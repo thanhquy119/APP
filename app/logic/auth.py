@@ -19,7 +19,7 @@ _USERNAME_RE = re.compile(r"^[a-zA-Z0-9._-]{3,32}$")
 
 @dataclass(slots=True)
 class UserAccount:
-    """Persistent account record stored in Google Sheets."""
+    """Persistent account record stored in the configured remote backend."""
 
     user_id: str
     username: str

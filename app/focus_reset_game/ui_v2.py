@@ -1017,7 +1017,7 @@ class FocusResetDialog(QDialog):
         start_btn.clicked.connect(self._start_auto_probe)
         hero_layout.addWidget(start_btn)
 
-        result_btn = QPushButton("Kết quả")
+        result_btn = QPushButton("Lịch sử phục hồi")
         result_btn.clicked.connect(self._show_recovery_results)
         hero_layout.addWidget(result_btn)
 
@@ -1042,12 +1042,12 @@ class FocusResetDialog(QDialog):
         panel_layout.setSpacing(10)
 
         trend_header = QHBoxLayout()
-        trend_title = QLabel("Kết quả sau 5-10 phút")
+        trend_title = QLabel("Lịch sử phục hồi sau nghỉ")
         trend_title.setObjectName("trendTitle")
         trend_header.addWidget(trend_title)
         trend_header.addStretch()
 
-        history_btn = QPushButton("Xem lịch sử")
+        history_btn = QPushButton("Xem chi tiết")
         history_btn.clicked.connect(self._show_history)
         trend_header.addWidget(history_btn)
         panel_layout.addLayout(trend_header)
@@ -1060,9 +1060,9 @@ class FocusResetDialog(QDialog):
         self.trend_sessions_value = QLabel("0")
         self.trend_score_value = QLabel("-")
         self.trend_delta_value = QLabel("-")
-        metric_row.addWidget(self._build_trend_metric("Xác nhận", self.trend_sessions_value))
-        metric_row.addWidget(self._build_trend_metric("Sẵn sàng", self.trend_score_value))
-        metric_row.addWidget(self._build_trend_metric("Hiệu quả", self.trend_delta_value))
+        metric_row.addWidget(self._build_trend_metric("Lần đo", self.trend_sessions_value))
+        metric_row.addWidget(self._build_trend_metric("Sau nghỉ", self.trend_score_value))
+        metric_row.addWidget(self._build_trend_metric("Phục hồi", self.trend_delta_value))
         panel_layout.addLayout(metric_row)
 
         back_row = QHBoxLayout()
@@ -1660,6 +1660,17 @@ class FocusResetDialog(QDialog):
         self.result_flanker = QLabel("-")
         self.result_sequence = QLabel("-")
         self.result_visual = QLabel("-")
+        self.result_baseline_rt = QLabel("-")
+
+        summary_grid = QGridLayout()
+        summary_grid.setContentsMargins(0, 0, 0, 0)
+        summary_grid.setHorizontalSpacing(8)
+        summary_grid.setVerticalSpacing(8)
+        self._add_result_row(summary_grid, 0, "Baseline phản ứng", self.result_baseline_rt)
+        self._add_result_row(summary_grid, 1, "Phản ứng sau nghỉ", self.result_avg_rt)
+        self._add_result_row(summary_grid, 2, "Độ chính xác", self.result_accuracy)
+        self._add_result_row(summary_grid, 3, "Ổn định chú ý", self.result_attention_stability)
+        panel_layout.addLayout(summary_grid)
 
         self.result_feedback = QLabel("")
         self.result_feedback.setWordWrap(True)
@@ -2766,6 +2777,10 @@ class FocusResetDialog(QDialog):
         self.result_attention_stability.setText(f"{summary.focus_stability:.1f} / 100")
         self.result_accuracy.setText(f"{summary.accuracy:.1f}%")
         self.result_avg_rt.setText(f"{summary.average_reaction_ms:.0f} ms")
+        if self._baseline_summary is not None and self._baseline_summary.average_reaction_ms > 0:
+            self.result_baseline_rt.setText(f"{self._baseline_summary.average_reaction_ms:.0f} ms")
+        else:
+            self.result_baseline_rt.setText("Chưa có")
         self.result_rt_var.setText(f"{summary.reaction_variability_ms:.0f} ms")
         self.result_omissions.setText(str(int(summary.omission_errors)))
         self.result_commissions.setText(str(int(summary.commission_errors)))

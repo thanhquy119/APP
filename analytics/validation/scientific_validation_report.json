@@ -1,0 +1,48 @@
+{
+  "created_at": "2026-05-05T22:49:15",
+  "n_events": 210,
+  "n_recovery_events": 210,
+  "readiness_delta_mean": 7.816,
+  "readiness_delta_sd": 5.2034268428691215,
+  "transfer_score_mean": 0.7574700000000001,
+  "recovery_success_rate": 0.7238095238095238,
+  "correlations_spearman": {
+    "self_report_ready__vs__transfer_score": {
+      "n": 210,
+      "spearman_r": 0.8204539272834084
+    },
+    "self_report_ready__vs__return_work_stable_ratio": {
+      "n": 210,
+      "spearman_r": 0.8181375465312261
+    },
+    "game_attention_score__vs__transfer_score": {
+      "n": 210,
+      "spearman_r": 0.9847048581086
+    },
+    "game_attention_score__vs__return_work_stable_ratio": {
+      "n": 210,
+      "spearman_r": 0.9270175808248037
+    },
+    "attention_stability__vs__return_work_stable_ratio": {
+      "n": 210,
+      "spearman_r": 0.921750156297609
+    },
+    "accuracy__vs__return_work_stable_ratio": {
+      "n": 210,
+      "spearman_r": 0.9050462236128892
+    },
+    "reaction_variability_ms__vs__return_work_stable_ratio": {
+      "n": 210,
+      "spearman_r": -0.7306939117381472
+    },
+    "fatigue_index__vs__return_work_stable_ratio": {
+      "n": 210,
+      "spearman_r": -0.8914586522429727
+    },
+    "pre_work_readiness__vs__post_work_readiness": {
+      "n": 210,
+      "spearman_r": 0.9751674808549078
+    }
+  },
+  "interpretation_note": "These statistics test whether FocusGuardian behavioral signals align with self-report, attention-probe metrics, and return-to-work outcomes. They are validation evidence, not proof of direct cognitive-state measurement."
+}

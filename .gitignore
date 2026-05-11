@@ -29,6 +29,8 @@ build/
 build_*/
 dist/
 dist_*/
+dist-*/
+*.zip
 *.spec.bak
 
 # Python packaging metadata

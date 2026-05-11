@@ -36,6 +36,7 @@ _kernel32 = None
 try:
     _user32 = ctypes.WinDLL("user32", use_last_error=True)
     _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _WndEnumProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
     _user32.GetForegroundWindow.restype = wintypes.HWND
     _user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
@@ -44,6 +45,8 @@ try:
     _user32.GetWindowTextW.restype = ctypes.c_int
     _user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
     _user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    _user32.EnumChildWindows.argtypes = [wintypes.HWND, _WndEnumProc, wintypes.LPARAM]
+    _user32.EnumChildWindows.restype = wintypes.BOOL
 
     _kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     _kernel32.OpenProcess.restype = wintypes.HANDLE
@@ -64,42 +67,175 @@ except Exception as exc:  # pragma: no cover - non-Windows fallback
 
 DEFAULT_TASK_KEYWORDS = (
     "code",
+    "coding",
+    "visual studio code",
     "visual studio",
     "pycharm",
     "cursor",
     "terminal",
+    "powershell",
+    "command prompt",
     "notion",
+    "obsidian",
     "word",
     "excel",
     "powerpoint",
+    "google docs",
+    "google sheets",
+    "google slides",
+    "google drive",
+    "drive",
     "docs",
     "sheets",
     "slides",
     "research",
     "study",
     "learning",
+    "classroom",
+    "coursera",
+    "udemy",
+    "edx",
+    "khan academy",
     "jira",
     "trello",
+    "linear",
+    "asana",
+    "figma",
+    "canva",
     "slack",
     "teams",
+    "zoom",
+    "meet",
+    "google meet",
     "outlook",
     "mail",
     "github",
     "gitlab",
+    "stackoverflow",
+    "stack overflow",
+)
+
+DEFAULT_TASK_APPS = (
+    "codex.exe",
+    "code.exe",
+    "cursor.exe",
+    "pycharm64.exe",
+    "devenv.exe",
+    "windowsterminal.exe",
+    "powershell.exe",
+    "cmd.exe",
+    "notion.exe",
+    "obsidian.exe",
+    "figma.exe",
+    "slack.exe",
+    "teams.exe",
+    "ms-teams.exe",
+    "zoom.exe",
+    "winword.exe",
+    "excel.exe",
+    "powerpnt.exe",
+    "outlook.exe",
 )
 
 DEFAULT_DISTRACTING_KEYWORDS = (
     "youtube",
+    "youtube shorts",
+    "shorts",
     "facebook",
+    "facebook watch",
+    "fb watch",
     "instagram",
+    "reels",
+    "threads",
     "tiktok",
     "netflix",
+    "prime video",
+    "disney+",
+    "disney plus",
+    "hbo",
+    "max.com",
     "game",
     "steam",
     "discord",
     "reddit",
+    "x.com",
+    "twitter",
+    "snapchat",
+    "pinterest",
     "news",
     "shopping",
+    "shopee",
+    "lazada",
+    "tiki",
+    "sendo",
+    "twitch",
+    "kick.com",
+    "roblox",
+    "valorant",
+    "league of legends",
+    "liên minh",
+    "lien minh",
+    "lol",
+    "epic games",
+    "garena",
+    "minecraft",
+    "fortnite",
+    "free fire",
+    "pubg",
+    "genshin",
+    "honkai",
+    "zenless",
+    "dota",
+    "dota 2",
+    "counter-strike",
+    "counter strike",
+    "cs2",
+    "overwatch",
+    "battle.net",
+)
+
+DEFAULT_DISTRACTING_APPS = (
+    "steam.exe",
+    "steamwebhelper.exe",
+    "epicgameslauncher.exe",
+    "epicgameslauncher",
+    "epicwebhelper.exe",
+    "riotclientservices.exe",
+    "riotclientux.exe",
+    "leagueclient.exe",
+    "leagueclientux.exe",
+    "league of legends.exe",
+    "valorant.exe",
+    "valorant-win64-shipping.exe",
+    "robloxplayerbeta.exe",
+    "minecraftlauncher.exe",
+    "fortniteclient-win64-shipping.exe",
+    "garena.exe",
+    "freefire.exe",
+    "pubg.exe",
+    "tslgame.exe",
+    "dota2.exe",
+    "cs2.exe",
+    "overwatch.exe",
+    "battle.net.exe",
+    "battlenet.exe",
+    "eaapp.exe",
+    "ubisoftconnect.exe",
+    "genshinimpact.exe",
+    "hoyoplay.exe",
+    "discord.exe",
+    "tiktok.exe",
+)
+
+DEFAULT_BROWSER_PROCESS_NAMES = (
+    "arc.exe",
+    "chrome.exe",
+    "msedge.exe",
+    "brave.exe",
+    "firefox.exe",
+    "opera.exe",
+    "opera gx.exe",
+    "vivaldi.exe",
 )
 
 DEFAULT_NEUTRAL_KEYWORDS = (
@@ -117,6 +253,11 @@ DEFAULT_EXCLUDED_KEYWORDS = (
     "toast",
 )
 
+DEFAULT_EXCLUDED_APPS = (
+    "focusguardian.exe",
+    "focusguardian-onefile.exe",
+)
+
 
 @dataclass
 class TaskContextSample:
@@ -127,6 +268,8 @@ class TaskContextSample:
     process_name: str
     process_id: int
     app_id: str
+    window_handle: int = 0
+    context_text: str = ""
     category: str = "unknown"
     confidence: float = 0.0
     reason: str = ""
@@ -157,11 +300,11 @@ class TaskContextConfig:
     distracting_keywords: Tuple[str, ...] = tuple(DEFAULT_DISTRACTING_KEYWORDS)
     neutral_keywords: Tuple[str, ...] = tuple(DEFAULT_NEUTRAL_KEYWORDS)
 
-    task_apps: Tuple[str, ...] = tuple()
-    distracting_apps: Tuple[str, ...] = tuple()
+    task_apps: Tuple[str, ...] = tuple(DEFAULT_TASK_APPS)
+    distracting_apps: Tuple[str, ...] = tuple(DEFAULT_DISTRACTING_APPS)
 
     excluded_keywords: Tuple[str, ...] = tuple(DEFAULT_EXCLUDED_KEYWORDS)
-    excluded_apps: Tuple[str, ...] = tuple()
+    excluded_apps: Tuple[str, ...] = tuple(DEFAULT_EXCLUDED_APPS)
 
 
 @dataclass
@@ -225,6 +368,8 @@ class TaskContextMonitor:
         title = ""
         process_id = 0
         process_name = ""
+        hwnd = 0
+        context_text = ""
 
         try:
             hwnd = _user32.GetForegroundWindow()
@@ -232,6 +377,7 @@ class TaskContextMonitor:
                 title = self._read_window_title(hwnd)
                 process_id = self._read_process_id(hwnd)
                 process_name = self._resolve_process_name(process_id)
+                context_text = self._read_auxiliary_context_text(hwnd, title, process_name)
         except Exception as exc:
             logger.debug("Failed to query active window context: %s", exc)
 
@@ -243,6 +389,8 @@ class TaskContextMonitor:
             process_name=process_name,
             process_id=process_id,
             app_id=app_id,
+            window_handle=int(hwnd or 0),
+            context_text=context_text,
         )
 
     @staticmethod
@@ -273,6 +421,41 @@ class TaskContextMonitor:
         process_id = wintypes.DWORD(0)
         _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
         return int(process_id.value or 0)
+
+    @staticmethod
+    def _read_auxiliary_context_text(hwnd: int, title: str, process_name: str) -> str:
+        """Read lightweight child-window text for browsers that hide tab titles."""
+        process = str(process_name or "").strip().lower()
+        if process not in DEFAULT_BROWSER_PROCESS_NAMES:
+            return ""
+        if _user32 is None or "_WndEnumProc" not in globals():
+            return ""
+
+        main_title = str(title or "").strip()
+        values: List[str] = []
+        seen: set[str] = set()
+
+        def _callback(child_hwnd, _lparam):
+            if len(values) >= 60:
+                return False
+            try:
+                child_title = TaskContextMonitor._read_window_title(child_hwnd)
+            except Exception:
+                child_title = ""
+            child_title = str(child_title or "").strip()
+            key = child_title.lower()
+            if child_title and child_title != main_title and key not in seen:
+                seen.add(key)
+                values.append(child_title[:160])
+            return True
+
+        try:
+            _user32.EnumChildWindows(hwnd, _WndEnumProc(_callback), 0)
+        except Exception as exc:
+            logger.debug("Failed to read auxiliary browser context text: %s", exc)
+            return ""
+
+        return " ".join(values)
 
     @staticmethod
     def _resolve_process_name(process_id: int) -> str:
@@ -306,7 +489,6 @@ class TaskContextMonitor:
             return ""
         finally:
             _kernel32.CloseHandle(handle)
-
 
 class TaskContextClassifier:
     """Classify active-window samples into task-related context states."""
@@ -348,6 +530,19 @@ class TaskContextClassifier:
             seen.add(token)
             deduped.append(token)
         return tuple(deduped)
+
+    @classmethod
+    def _merge_tokens(cls, *groups: Any) -> Tuple[str, ...]:
+        """Merge default and saved tokens while preserving order."""
+        merged: List[str] = []
+        seen: set[str] = set()
+        for group in groups:
+            for token in cls._normalize_tokens(group):
+                if token in seen:
+                    continue
+                seen.add(token)
+                merged.append(token)
+        return tuple(merged)
 
     @staticmethod
     def _contains_any(text: str, candidates: Sequence[str]) -> bool:
@@ -399,23 +594,34 @@ class TaskContextClassifier:
             sample_interval_seconds=max(2.0, min(30.0, sample_interval)),
             lookback_seconds=max(60.0, min(3600.0, lookback_minutes * 60.0)),
             max_samples=max(120, min(12000, max_samples)),
-            task_keywords=self._normalize_tokens(data.get("task_context_task_keywords", self.config.task_keywords))
-            or tuple(DEFAULT_TASK_KEYWORDS),
-            distracting_keywords=self._normalize_tokens(
-                data.get("task_context_distracting_keywords", self.config.distracting_keywords)
-            )
-            or tuple(DEFAULT_DISTRACTING_KEYWORDS),
-            neutral_keywords=self._normalize_tokens(data.get("task_context_neutral_keywords", self.config.neutral_keywords))
-            or tuple(DEFAULT_NEUTRAL_KEYWORDS),
-            task_apps=self._normalize_tokens(data.get("task_context_task_apps", self.config.task_apps)),
-            distracting_apps=self._normalize_tokens(
-                data.get("task_context_distracting_apps", self.config.distracting_apps)
+            task_keywords=self._merge_tokens(
+                DEFAULT_TASK_KEYWORDS,
+                data.get("task_context_task_keywords", self.config.task_keywords),
             ),
-            excluded_keywords=self._normalize_tokens(
-                data.get("task_context_excluded_keywords", self.config.excluded_keywords)
-            )
-            or tuple(DEFAULT_EXCLUDED_KEYWORDS),
-            excluded_apps=self._normalize_tokens(data.get("task_context_excluded_apps", self.config.excluded_apps)),
+            distracting_keywords=self._merge_tokens(
+                DEFAULT_DISTRACTING_KEYWORDS,
+                data.get("task_context_distracting_keywords", self.config.distracting_keywords),
+            ),
+            neutral_keywords=self._merge_tokens(
+                DEFAULT_NEUTRAL_KEYWORDS,
+                data.get("task_context_neutral_keywords", self.config.neutral_keywords),
+            ),
+            task_apps=self._merge_tokens(
+                DEFAULT_TASK_APPS,
+                data.get("task_context_task_apps", self.config.task_apps),
+            ),
+            distracting_apps=self._merge_tokens(
+                DEFAULT_DISTRACTING_APPS,
+                data.get("task_context_distracting_apps", self.config.distracting_apps),
+            ),
+            excluded_keywords=self._merge_tokens(
+                DEFAULT_EXCLUDED_KEYWORDS,
+                data.get("task_context_excluded_keywords", self.config.excluded_keywords),
+            ),
+            excluded_apps=self._merge_tokens(
+                DEFAULT_EXCLUDED_APPS,
+                data.get("task_context_excluded_apps", self.config.excluded_apps),
+            ),
         )
 
         self.config = next_config
@@ -426,23 +632,28 @@ class TaskContextClassifier:
     def classify(self, sample: TaskContextSample) -> Tuple[str, float, str]:
         """Return category, confidence, and a short rule trace."""
         title = str(sample.window_title or "").strip().lower()
+        auxiliary_text = str(getattr(sample, "context_text", "") or "").strip().lower()
+        classification_text = f"{title} {auxiliary_text}".strip()
 
-        if self._matches_app(sample, self.config.excluded_apps) or self._contains_any(title, self.config.excluded_keywords):
+        if self._matches_app(sample, self.config.excluded_apps) or self._contains_any(
+            classification_text,
+            self.config.excluded_keywords,
+        ):
             return "excluded", 0.0, "excluded rule"
 
         if self._matches_app(sample, self.config.distracting_apps):
             return "distracting", 0.95, "distracting app"
 
-        if self._contains_any(title, self.config.distracting_keywords):
+        if self._contains_any(classification_text, self.config.distracting_keywords):
             return "distracting", 0.88, "distracting keyword"
 
         if self._matches_app(sample, self.config.task_apps):
             return "task_related", 0.92, "task app"
 
-        if self._contains_any(title, self.config.task_keywords):
+        if self._contains_any(classification_text, self.config.task_keywords):
             return "task_related", 0.82, "task keyword"
 
-        if self._contains_any(title, self.config.neutral_keywords):
+        if self._contains_any(classification_text, self.config.neutral_keywords):
             return "neutral", 0.68, "neutral keyword"
 
         if not title and not str(sample.process_name or "").strip():
@@ -472,11 +683,12 @@ class TaskContextClassifier:
         now = float(sample.timestamp or time.time())
         process = str(sample.process_name or "unknown").strip() or "unknown"
         title = str(sample.window_title or "").strip()
+        auxiliary_text = str(getattr(sample, "context_text", "") or "").strip()
         category = str(sample.category or "unknown").strip() or "unknown"
         reason = str(sample.reason or "").strip()
         confidence = self._clamp(float(sample.confidence or 0.0), 0.0, 1.0)
 
-        signature = f"{process}|{title}|{category}|{reason}"
+        signature = f"{process}|{title}|{auxiliary_text}|{category}|{reason}"
         # Log on context changes, and also periodically so long sessions are visible in focusguardian.log.
         if signature == self._last_logged_signature and (now - self._last_log_at) < 15.0:
             return
@@ -489,7 +701,7 @@ class TaskContextClassifier:
             category,
             confidence,
             reason,
-            title[:160],
+            (title or auxiliary_text)[:160],
         )
 
     def clear_samples(self) -> None:
@@ -516,9 +728,19 @@ class TaskContextClassifier:
             "neutral": 0,
             "unknown": 0,
         }
+        weighted_counts = {
+            "task_related": 0.0,
+            "distracting": 0.0,
+            "neutral": 0.0,
+            "unknown": 0.0,
+        }
         valid_samples = 0
         switch_count = 0
         last_app = ""
+        last_valid_category = ""
+        last_valid_app_id = ""
+        now_ts = float(now if now is not None else time.time())
+        half_life_seconds = 70.0
 
         for item in recent:
             category = str(item.category or "unknown").strip().lower()
@@ -529,6 +751,12 @@ class TaskContextClassifier:
             if category not in counts:
                 category = "unknown"
             counts[category] += 1
+            last_valid_category = category
+            last_valid_app_id = str(item.app_id or "")
+
+            age_seconds = max(0.0, now_ts - float(item.timestamp or now_ts))
+            weight = 0.5 ** (age_seconds / max(1.0, half_life_seconds))
+            weighted_counts[category] += weight
 
             current_app = str(item.app_id or "").strip().lower()
             if current_app:
@@ -536,22 +764,59 @@ class TaskContextClassifier:
                     switch_count += 1
                 last_app = current_app
 
+        current_category = str(recent[-1].category or "unknown").strip().lower()
+        current_app_id = str(recent[-1].app_id or "")
+
+        if valid_samples <= 0:
+            return TaskContextStats(
+                total_samples=0,
+                task_related_samples=0,
+                distracting_samples=0,
+                neutral_samples=0,
+                unknown_samples=0,
+                task_alignment_ratio=0.0,
+                distracting_ratio=0.0,
+                neutral_ratio=0.0,
+                unknown_ratio=0.0,
+                risk_score=0.0,
+                context_switch_count=0,
+                current_category=current_category or "excluded",
+                current_app_id=current_app_id,
+                updated_at=float(recent[-1].timestamp),
+            )
+
         denominator = max(1, valid_samples)
         task_ratio = counts["task_related"] / denominator
         distracting_ratio = counts["distracting"] / denominator
         neutral_ratio = counts["neutral"] / denominator
         unknown_ratio = counts["unknown"] / denominator
 
+        weight_denominator = max(1e-6, sum(weighted_counts.values()))
+        weighted_task_ratio = weighted_counts["task_related"] / weight_denominator
+        weighted_distracting_ratio = weighted_counts["distracting"] / weight_denominator
+        weighted_neutral_ratio = weighted_counts["neutral"] / weight_denominator
+        weighted_unknown_ratio = weighted_counts["unknown"] / weight_denominator
+
         risk = (
-            (distracting_ratio * 0.62)
-            + ((1.0 - task_ratio) * 0.28)
-            + (unknown_ratio * 0.10)
+            (weighted_distracting_ratio * 0.78)
+            + (weighted_unknown_ratio * 0.08)
+            + (weighted_neutral_ratio * 0.03)
+            + ((1.0 - weighted_task_ratio) * 0.05)
         )
-        current_category = str(recent[-1].category or "unknown").strip().lower()
-        if current_category == "distracting":
-            risk = max(risk, 0.72)
-        elif current_category == "task_related":
-            risk = min(risk, 0.45)
+        effective_current_category = last_valid_category or current_category
+        effective_current_app_id = last_valid_app_id or current_app_id
+
+        if effective_current_category == "distracting":
+            risk = max(risk, 0.86)
+        elif effective_current_category == "task_related":
+            risk = min(risk, 0.14 if weighted_distracting_ratio <= 0.03 else 0.42)
+        elif effective_current_category == "neutral" and weighted_distracting_ratio <= 0.03:
+            risk = min(risk, 0.16)
+        elif effective_current_category in {"unknown", "excluded"} and weighted_distracting_ratio <= 0.03:
+            risk = min(risk, 0.18)
+
+        if valid_samples < 3 and effective_current_category != "distracting":
+            risk = min(risk, 0.16)
 
         risk = self._clamp(risk, 0.0, 1.0)
 
@@ -567,8 +832,8 @@ class TaskContextClassifier:
             unknown_ratio=float(unknown_ratio),
             risk_score=float(risk),
             context_switch_count=int(switch_count),
-            current_category=str(recent[-1].category or "unknown"),
-            current_app_id=str(recent[-1].app_id or ""),
+            current_category=str(effective_current_category or recent[-1].category or "unknown"),
+            current_app_id=str(effective_current_app_id or recent[-1].app_id or ""),
             updated_at=float(recent[-1].timestamp),
         )
 

@@ -65,8 +65,41 @@ _relaunch_with_project_venv_if_needed()
 from PyQt6.QtWidgets import QApplication, QDialog
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
-from app.logic.google_sheets_sync import PROFILE_SCOPED_CONFIG_KEYS
+from app.logic.cloud_payloads import PROFILE_SCOPED_CONFIG_KEYS
 from app.logic.zalo_bot import FIXED_ZALO_BOT_TOKEN
+
+
+def _runtime_root_dir() -> Path:
+    """Return stable runtime root for user-writable files next to the launcher."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def _bundled_root_dir() -> Path:
+    """Return PyInstaller's bundled data root, or the source root in dev."""
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", "")
+        if meipass:
+            return Path(meipass)
+        return _runtime_root_dir() / "_internal"
+    return Path(__file__).resolve().parent
+
+
+def _dedupe_paths(paths: list[Path]) -> list[Path]:
+    result: list[Path] = []
+    seen: set[Path] = set()
+    for path in paths:
+        try:
+            key = path.resolve()
+        except Exception:
+            key = path
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    return result
+
 
 # Configure logging
 logging.basicConfig(
@@ -74,25 +107,21 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("focusguardian.log", encoding="utf-8"),
+        logging.FileHandler(_runtime_root_dir() / "focusguardian.log", encoding="utf-8"),
     ]
 )
 logger = logging.getLogger(__name__)
 
 
-def _runtime_root_dir() -> Path:
-    """Return stable runtime root for config/log files."""
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent
-
-
 # Configuration file path
 CONFIG_FILE = _runtime_root_dir() / "config.json"
+BUNDLED_CONFIG_FILE = _bundled_root_dir() / "config.json"
 DEFAULT_CONFIG = {
     "camera_id": 0,
     "resolution": "640x480",
-    "fps": 30,
+    "fps": 15,
+    "vision_target_fps": 8,
+    "camera_preview_fps": 12,
     "show_overlay": True,
     "show_face_mesh": False,
     "head_down_threshold": -22,
@@ -102,7 +131,7 @@ DEFAULT_CONFIG = {
     "enable_phone_detection": True,
     "phone_detection_mode": "heuristic",
     "phone_confidence_threshold": 0.55,
-    "phone_detection_interval_frames": 3,
+    "phone_detection_interval_frames": 4,
     "phone_confirmation_window_seconds": 2.5,
     "phone_confirmation_min_hits": 3,
     "phone_confidence_min": 0.58,
@@ -144,14 +173,38 @@ DEFAULT_CONFIG = {
     "distraction_break_cooldown_minutes": 15,
     "auto_resume_after_break": True,
     "enable_task_context_monitoring": True,
-    "task_context_sample_interval_seconds": 5.0,
+    "task_context_sample_interval_seconds": 8.0,
     "task_context_lookback_minutes": 5.0,
     "task_context_max_samples": 2400,
-    "task_context_task_keywords": "code,study,research,docs,sheets,github,notion",
-    "task_context_distracting_keywords": "youtube,facebook,instagram,tiktok,netflix,steam,game",
+    "task_context_task_keywords": (
+        "code,coding,visual studio code,visual studio,pycharm,cursor,terminal,powershell,"
+        "command prompt,notion,obsidian,word,excel,powerpoint,google docs,google sheets,"
+        "google slides,google drive,drive,docs,sheets,slides,research,study,learning,"
+        "classroom,coursera,udemy,edx,khan academy,jira,trello,linear,asana,figma,canva,"
+        "slack,teams,zoom,meet,google meet,outlook,mail,github,gitlab,stackoverflow,stack overflow"
+    ),
+    "task_context_distracting_keywords": (
+        "youtube,youtube shorts,shorts,facebook,facebook watch,fb watch,instagram,reels,"
+        "threads,tiktok,netflix,prime video,disney+,disney plus,hbo,max.com,game,steam,"
+        "discord,reddit,x.com,twitter,snapchat,pinterest,news,shopping,shopee,lazada,tiki,"
+        "sendo,twitch,kick.com,roblox,valorant,league of legends,liên minh,lien minh,lol,"
+        "epic games,garena,minecraft,fortnite,free fire,pubg,genshin,honkai,zenless,dota,"
+        "dota 2,counter-strike,counter strike,cs2,overwatch,battle.net"
+    ),
     "task_context_neutral_keywords": "explorer,settings,file",
-    "task_context_task_apps": "",
-    "task_context_distracting_apps": "",
+    "task_context_task_apps": (
+        "code.exe,cursor.exe,pycharm64.exe,devenv.exe,windowsterminal.exe,powershell.exe,"
+        "cmd.exe,notion.exe,obsidian.exe,figma.exe,slack.exe,teams.exe,ms-teams.exe,zoom.exe,"
+        "winword.exe,excel.exe,powerpnt.exe,outlook.exe"
+    ),
+    "task_context_distracting_apps": (
+        "steam.exe,steamwebhelper.exe,epicgameslauncher.exe,epicgameslauncher,epicwebhelper.exe,"
+        "riotclientservices.exe,riotclientux.exe,leagueclient.exe,leagueclientux.exe,"
+        "league of legends.exe,valorant.exe,valorant-win64-shipping.exe,robloxplayerbeta.exe,"
+        "minecraftlauncher.exe,fortniteclient-win64-shipping.exe,garena.exe,freefire.exe,"
+        "pubg.exe,tslgame.exe,dota2.exe,cs2.exe,overwatch.exe,battle.net.exe,battlenet.exe,"
+        "eaapp.exe,ubisoftconnect.exe,genshinimpact.exe,hoyoplay.exe,discord.exe,tiktok.exe"
+    ),
     "task_context_excluded_keywords": "focusguardian,notification",
     "task_context_excluded_apps": "",
     "task_context_checkin_enabled": True,
@@ -159,6 +212,9 @@ DEFAULT_CONFIG = {
     "task_context_checkin_cooldown_minutes": 8,
     "task_context_checkin_risk_threshold": 0.72,
     "task_context_checkin_max_per_hour": 3,
+    "task_context_alert_enabled": True,
+    "task_context_alert_cooldown_seconds": 120,
+    "task_context_alert_threshold": 0.68,
     "session_goal_prompt_enabled": True,
     "session_exit_feedback_enabled": True,
     "deadline_mode_enabled": False,
@@ -170,24 +226,28 @@ DEFAULT_CONFIG = {
     "pomodoro_work": 25,
     "pomodoro_short_break": 5,
     "pomodoro_long_break": 15,
-    "enable_google_sheets_sync": True,
-    "google_sheets_id": "1p69XtvQ9ZRwMA_v3YAxQs3LyGwdtb70aTwjb2OtdUsU",
-    "google_sheets_worksheet": "focusguardian_sessions",
-    "google_sheets_sessions_worksheet": "focusguardian_sessions",
-    "google_sheets_baseline_worksheet": "focusguardian_user_baselines",
-    "google_sheets_events_worksheet": "focusguardian_focus_events",
-    "google_sheets_users_worksheet": "focusguardian_users",
-    "google_sheets_profile_settings_worksheet": "focusguardian_profile_settings",
-    "google_service_account_path": "google_service_account.json",
+    "enable_supabase_sync": True,
+    "supabase_url": "https://jprbgccjztseypgzcmea.supabase.co",
+    "supabase_api_key": "",
+    "supabase_publishable_key": "",
+    "supabase_anon_key": "",
+    "supabase_service_role_key": "",
+    "supabase_sessions_table": "focusguardian_sessions",
+    "supabase_baseline_table": "focusguardian_user_baselines",
+    "supabase_events_table": "focusguardian_focus_events",
+    "supabase_users_table": "focusguardian_users",
+    "supabase_profile_settings_table": "focusguardian_profile_settings",
+    "supabase_timeout_seconds": 10.0,
+    "allow_offline_login": False,
     "enable_zalo_alerts": False,
     "zalo_bot_token": FIXED_ZALO_BOT_TOKEN,
     "zalo_chat_id": "",
     "zalo_webhook_secret": "",
     "zalo_api_timeout_seconds": 8.0,
-    "zalo_alert_cooldown_minutes": 10,
+    "zalo_alert_cooldown_minutes": 2,
     "zalo_alert_threshold_seconds": 5,
     "zalo_distraction_confirm_seconds": 5,
-    "zalo_state_cooldown_seconds": 600,
+    "zalo_state_cooldown_seconds": 120,
     "zalo_alert_on_distraction": True,
     "zalo_alert_on_drowsy": True,
     "zalo_alert_on_phone": True,
@@ -203,7 +263,7 @@ DEFAULT_CONFIG = {
     "enable_focus_audio": False,
     "focus_audio_track": "rain_light",
     "focus_audio_volume": 30,
-    "theme_mode": "light",
+    "theme_mode": "dark",
     "auth_last_username": "",
     "auth_last_profile_name": "",
     "auth_last_login_at_iso": "",
@@ -218,18 +278,27 @@ DEFAULT_CONFIG = {
 }
 
 
+def _config_source_files() -> list[Path]:
+    """Load packaged defaults first, then user-writable config overrides."""
+    return [
+        path
+        for path in _dedupe_paths([BUNDLED_CONFIG_FILE, CONFIG_FILE])
+        if path.exists()
+    ]
+
+
 def load_config() -> dict:
     """Load configuration from file."""
     config = DEFAULT_CONFIG.copy()
 
-    if CONFIG_FILE.exists():
+    for config_file in _config_source_files():
         try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            with open(config_file, "r", encoding="utf-8") as f:
                 saved = json.load(f)
                 config.update(saved)
-            logger.info("Configuration loaded from %s", CONFIG_FILE)
+            logger.info("Configuration loaded from %s", config_file)
         except Exception as e:
-            logger.warning("Failed to load config: %s", e)
+            logger.warning("Failed to load config from %s: %s", config_file, e)
 
     # Keep threshold in a sane range while preserving user preference.
     try:
@@ -238,9 +307,9 @@ def load_config() -> dict:
         head_down = -22.0
     config["head_down_threshold"] = max(-45.0, min(0.0, head_down))
 
-    theme_mode = str(config.get("theme_mode", "light")).strip().lower()
+    theme_mode = str(config.get("theme_mode", "dark")).strip().lower()
     if theme_mode not in {"dark", "light"}:
-        config["theme_mode"] = "light"
+        config["theme_mode"] = "dark"
     else:
         config["theme_mode"] = theme_mode
 
@@ -293,6 +362,7 @@ def load_config() -> dict:
 
     config["enable_task_context_monitoring"] = bool(config.get("enable_task_context_monitoring", True))
     config["task_context_checkin_enabled"] = bool(config.get("task_context_checkin_enabled", True))
+    config["task_context_alert_enabled"] = bool(config.get("task_context_alert_enabled", True))
     config["session_goal_prompt_enabled"] = bool(config.get("session_goal_prompt_enabled", True))
     config["session_exit_feedback_enabled"] = bool(config.get("session_exit_feedback_enabled", True))
     config["deadline_mode_enabled"] = bool(config.get("deadline_mode_enabled", False))
@@ -353,6 +423,20 @@ def load_config() -> dict:
         config["task_context_checkin_max_per_hour"] = 3
 
     try:
+        config["task_context_alert_cooldown_seconds"] = max(
+            30,
+            min(900, int(float(config.get("task_context_alert_cooldown_seconds", 120) or 120))),
+        )
+    except (TypeError, ValueError):
+        config["task_context_alert_cooldown_seconds"] = 120
+
+    try:
+        context_alert_threshold = float(config.get("task_context_alert_threshold", 0.68) or 0.68)
+    except (TypeError, ValueError):
+        context_alert_threshold = 0.68
+    config["task_context_alert_threshold"] = max(0.2, min(0.98, context_alert_threshold))
+
+    try:
         config["deadline_focus_minutes"] = max(
             10,
             min(180, int(float(config.get("deadline_focus_minutes", 45) or 45))),
@@ -378,11 +462,11 @@ def load_config() -> dict:
 
     _normalize_keyword_csv(
         "task_context_task_keywords",
-        "code,study,research,docs,sheets,github,notion",
+        "code,coding,visual studio code,visual studio,pycharm,cursor,terminal,powershell,command prompt,notion,obsidian,word,excel,powerpoint,google docs,google sheets,google slides,google drive,drive,docs,sheets,slides,research,study,learning,classroom,coursera,udemy,edx,khan academy,jira,trello,linear,asana,figma,canva,slack,teams,zoom,meet,google meet,outlook,mail,github,gitlab,stackoverflow,stack overflow",
     )
     _normalize_keyword_csv(
         "task_context_distracting_keywords",
-        "youtube,facebook,instagram,tiktok,netflix,steam,game",
+        "youtube,youtube shorts,shorts,facebook,facebook watch,fb watch,instagram,reels,threads,tiktok,netflix,prime video,disney+,disney plus,hbo,max.com,game,steam,discord,reddit,x.com,twitter,snapchat,pinterest,news,shopping,shopee,lazada,tiki,sendo,twitch,kick.com,roblox,valorant,league of legends,liên minh,lien minh,lol,epic games,garena,minecraft,fortnite,free fire,pubg,genshin,honkai,zenless,dota,dota 2,counter-strike,counter strike,cs2,overwatch,battle.net",
     )
     _normalize_keyword_csv(
         "task_context_neutral_keywords",
@@ -390,11 +474,11 @@ def load_config() -> dict:
     )
     _normalize_keyword_csv(
         "task_context_task_apps",
-        "",
+        "code.exe,cursor.exe,pycharm64.exe,devenv.exe,windowsterminal.exe,powershell.exe,cmd.exe,notion.exe,obsidian.exe,figma.exe,slack.exe,teams.exe,ms-teams.exe,zoom.exe,winword.exe,excel.exe,powerpnt.exe,outlook.exe",
     )
     _normalize_keyword_csv(
         "task_context_distracting_apps",
-        "",
+        "steam.exe,steamwebhelper.exe,epicgameslauncher.exe,epicgameslauncher,epicwebhelper.exe,riotclientservices.exe,riotclientux.exe,leagueclient.exe,leagueclientux.exe,league of legends.exe,valorant.exe,valorant-win64-shipping.exe,robloxplayerbeta.exe,minecraftlauncher.exe,fortniteclient-win64-shipping.exe,garena.exe,freefire.exe,pubg.exe,tslgame.exe,dota2.exe,cs2.exe,overwatch.exe,battle.net.exe,battlenet.exe,eaapp.exe,ubisoftconnect.exe,genshinimpact.exe,hoyoplay.exe,discord.exe,tiktok.exe",
     )
     _normalize_keyword_csv(
         "task_context_excluded_keywords",
@@ -408,10 +492,10 @@ def load_config() -> dict:
     try:
         config["phone_detection_interval_frames"] = max(
             1,
-            int(float(config.get("phone_detection_interval_frames", 3) or 3)),
+            int(float(config.get("phone_detection_interval_frames", 4) or 4)),
         )
     except (TypeError, ValueError):
-        config["phone_detection_interval_frames"] = 3
+        config["phone_detection_interval_frames"] = 4
 
     try:
         config["phone_confirmation_window_seconds"] = max(
@@ -464,7 +548,7 @@ def save_config(config: dict):
         if str(key).startswith("_"):
             persistable.pop(key, None)
 
-    if bool(persistable.get("enable_google_sheets_sync", False)):
+    if bool(persistable.get("enable_supabase_sync", False)):
         for key in PROFILE_SCOPED_CONFIG_KEYS:
             # Keep theme locally so startup/auth palette follows the last selected mode
             # even when cloud sync is temporarily unavailable.
@@ -498,7 +582,7 @@ class FocusGuardianApp:
         self.config = load_config()
 
         # Apply configured theme palette
-        self._apply_theme_palette(self.config.get("theme_mode", "light"))
+        self._apply_theme_palette(self.config.get("theme_mode", "dark"))
 
         # Initialize components
         self.main_window = None
@@ -521,9 +605,9 @@ class FocusGuardianApp:
 
         # Setup
         self._init_main_window()
-        # MainWindow may load profile-scoped theme from Google during init.
+        # MainWindow may load profile-scoped theme from Supabase during init.
         # Re-apply app palette to keep popup/frame colors consistent at startup.
-        self._apply_theme_palette(self.config.get("theme_mode", "light"))
+        self._apply_theme_palette(self.config.get("theme_mode", "dark"))
         self._init_tray()
         self._connect_signals()
 
@@ -615,7 +699,7 @@ class FocusGuardianApp:
             profile_name=cached_profile,
             login_at=cached_login_at,
             login_at_iso=cached_login_iso,
-            verify_backend=False,
+            verify_backend=True,
         )
         if not result.success:
             logger.info("Skip restoring cached session: %s", result.message)
@@ -637,7 +721,7 @@ class FocusGuardianApp:
 
         from PyQt6.QtGui import QPalette, QColor
 
-        is_dark = str(theme_mode or "light").strip().lower() != "light"
+        is_dark = str(theme_mode or "dark").strip().lower() != "light"
         palette = QPalette()
 
         if is_dark:
@@ -683,7 +767,7 @@ class FocusGuardianApp:
         """Initialize system tray."""
         from app.ui.tray import SystemTray
         self.tray = SystemTray(parent=self.main_window)
-        self.tray.set_theme_mode(str(self.config.get("theme_mode", "light")))
+        self.tray.set_theme_mode(str(self.config.get("theme_mode", "dark")))
 
         if not self.tray.is_available():
             logger.warning("System tray not available")
@@ -695,6 +779,7 @@ class FocusGuardianApp:
         self.main_window.break_suggested.connect(self._on_break_suggested)
         self.main_window.config_changed.connect(self._on_config_changed)
         self.main_window.logout_requested.connect(self._handle_logout_request)
+        self.main_window.context_alert_requested.connect(self._on_context_alert_requested)
 
         # Tray signals
         self.tray.show_window_requested.connect(self._show_window)
@@ -736,9 +821,10 @@ class FocusGuardianApp:
     def _on_config_changed(self, config: dict):
         """Handle config updates emitted by the main window."""
         self.config.update(config)
-        self._apply_theme_palette(self.config.get("theme_mode", "light"))
+        self._apply_theme_palette(self.config.get("theme_mode", "dark"))
         if self.tray is not None:
-            self.tray.set_theme_mode(str(self.config.get("theme_mode", "light")))
+            self.tray.set_theme_mode(str(self.config.get("theme_mode", "dark")))
+        save_config(self.config)
 
     def _on_state_changed(self, state):
         """Handle focus state change."""
@@ -763,6 +849,30 @@ class FocusGuardianApp:
         if self.config.get("enable_notifications", True) and self.config.get("notify_break", True):
             break_minutes = int(self.main_window.config.get("break_duration_minutes", 5) or 5)
             self.tray.show_break_reminder(break_minutes=break_minutes)
+
+    def _on_context_alert_requested(self, title: str, message: str):
+        """Handle digital context nudges from active app/tab monitoring."""
+        if self.tray is None:
+            return
+        if not self.config.get("enable_notifications", True):
+            return
+        if not self.config.get("notify_distraction", True):
+            return
+        try:
+            from PyQt6.QtWidgets import QSystemTrayIcon
+
+            icon = QSystemTrayIcon.MessageIcon.Warning
+        except Exception:
+            icon = None
+        if icon is None:
+            self.tray.show_notification(str(title or "Nhắc nhẹ"), str(message or "Quay lại nhiệm vụ chính nhé."))
+        else:
+            self.tray.show_notification(
+                str(title or "Nhắc nhẹ"),
+                str(message or "Quay lại nhiệm vụ chính nhé."),
+                icon,
+                5000,
+            )
 
     def _show_window(self):
         """Show main window."""

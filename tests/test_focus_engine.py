@@ -178,6 +178,28 @@ class TestFocusEngineBasic:
         assert "intended_confidence" in info
         assert isinstance(info["reason"], str)
 
+    def test_confidence_explanation_surfaces_camera_quality_reasons(self):
+        """Low camera reliability should produce short user-facing reasons."""
+        engine = FocusEngine(FocusEngineConfig(hysteresis_enter=0.1))
+        base_time = time.time()
+        for idx in range(24):
+            engine.process_frame(create_frame_features(
+                timestamp=base_time + idx * 0.1,
+                face_detected=False,
+                vision_confidence=0.18,
+                face_tracking_confidence=0.05,
+                eye_confidence=0.05,
+                head_pose_confidence=0.05,
+                quality_warnings=("no_face", "low_light", "blur"),
+            ))
+
+        explanation = engine.get_confidence_explanation()
+
+        assert explanation["confidence_level"] in {"medium", "low"}
+        assert explanation["confidence_index"] < 0.7
+        assert any("ngoài khung camera" in reason for reason in explanation["reasons"])
+        assert any("Ánh sáng yếu" in reason for reason in explanation["reasons"])
+
 
 # ============================================================================
 # ON_SCREEN_READING Tests
@@ -471,6 +493,84 @@ class TestPhoneDistraction:
 
         # Should be PHONE_DISTRACTION or at least not focused
         assert final_state in (FocusState.PHONE_DISTRACTION, FocusState.UNCERTAIN)
+
+    def test_downward_pose_without_gaze_or_writing_lowers_task_evidence(self):
+        """Downward posture with no eye-gaze/writing evidence should not look highly on-task."""
+        engine = FocusEngine(FocusEngineConfig(
+            short_window=10.0,
+            long_window=20.0,
+            hysteresis_enter=0.1,
+            hysteresis_exit=0.1,
+        ))
+
+        base_time = time.time()
+        frames = generate_frames(
+            count=150,
+            start_time=base_time,
+            interval=0.1,
+            face_detected=True,
+            head_pitch=-20.0,
+            head_yaw=0.0,
+            ear_avg=0.28,
+            is_eye_closed=False,
+            eye_look_down=None,
+            eye_look_up=None,
+            hand_present=False,
+            hand_write_score=0.0,
+            hand_region="none",
+            phone_present=False,
+            phone_confidence=0.0,
+            vision_confidence=0.9,
+            head_pose_confidence=0.9,
+            eye_confidence=0.6,
+            face_tracking_confidence=0.9,
+        )
+
+        final_state = feed_frames(engine, frames)
+        breakdown = engine.get_score_breakdown()
+
+        assert final_state != FocusState.ON_SCREEN_READING
+        assert breakdown["engagement"] <= 0.65
+        assert breakdown["distraction"] <= 0.34
+
+    def test_no_face_camera_loss_does_not_look_like_distraction(self):
+        """Camera loss/out-of-frame should lower confidence instead of inflating distraction risk."""
+        engine = FocusEngine(FocusEngineConfig(
+            short_window=5.0,
+            long_window=10.0,
+            hysteresis_enter=0.1,
+            hysteresis_exit=0.1,
+        ))
+
+        base_time = time.time()
+        frames = generate_frames(
+            count=150,
+            start_time=base_time,
+            interval=0.1,
+            face_detected=False,
+            head_pitch=None,
+            head_yaw=None,
+            ear_avg=None,
+            is_eye_closed=False,
+            eye_look_down=None,
+            eye_look_up=None,
+            hand_present=False,
+            hand_write_score=0.0,
+            hand_region="none",
+            phone_present=False,
+            phone_confidence=0.0,
+            vision_confidence=0.22,
+            head_pose_confidence=0.0,
+            eye_confidence=0.0,
+            face_tracking_confidence=0.0,
+            quality_warnings=("no_face",),
+        )
+
+        final_state = feed_frames(engine, frames)
+        breakdown = engine.get_score_breakdown()
+
+        assert final_state in (FocusState.AWAY, FocusState.UNCERTAIN)
+        assert breakdown["distraction"] <= 0.25
 
     def test_head_down_eye_down_over_45s_is_phone(self):
         """Head-down + sustained eye-down over 45s should classify as PHONE_DISTRACTION."""

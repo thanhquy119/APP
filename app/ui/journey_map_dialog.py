@@ -381,7 +381,7 @@ class LeafletJourneyMapWidget(QWidget):
       activeLine.setLatLngs(routePoints.slice(0, activeCount));
       document.getElementById('remainingText').textContent = remainingText || '0 min';
       document.getElementById('distanceText').textContent = distanceText || '0 km';
-      document.getElementById('phaseText').textContent = phaseText ? ` ${phaseText}` : '';
+    document.getElementById('phaseText').textContent = phaseText ? ` ${{phaseText}}` : '';
     }};
     window.updateJourneyProgress(0, `${{journeyModel.duration_minutes}} min`, `${{journeyModel.distance_km}} km`, 'Boarding');
   </script>
@@ -410,7 +410,7 @@ class FallbackJourneyMapWidget(QWidget):
         self._last_progress_update_at: Optional[float] = None
         self._last_anim_tick_at = time.monotonic()
         self._last_repaint_at = 0.0
-        self._target_frame_interval = 1.0 / 30.0
+        self._target_frame_interval = 1.0 / 15.0
         self._tile_update_pending = False
         self._remaining_seconds = int(self._model["duration_minutes"]) * 60
         self._distance_left_km = int(self._model["distance_km"])
@@ -427,7 +427,7 @@ class FallbackJourneyMapWidget(QWidget):
         self._install_tile_disk_cache()
         self._network.finished.connect(self._on_tile_finished)
         self._camera_timer = QTimer(self)
-        self._camera_timer.setInterval(33)
+        self._camera_timer.setInterval(67)
         self._camera_timer.timeout.connect(self._tick_camera_animation)
         self._camera_timer.start()
         self.setMinimumSize(840, 540)
@@ -701,7 +701,7 @@ class FallbackJourneyMapWidget(QWidget):
         for _dist, _tile_x, _tile_y, key, dest in sorted(tile_jobs, key=lambda item: item[0]):
             pixmap = self._tile_cache.get(key)
             if pixmap is None:
-                if requested_this_paint < 10:
+                if requested_this_paint < 4:
                     if self._request_tile(key):
                         requested_this_paint += 1
                 continue
@@ -735,7 +735,7 @@ class FallbackJourneyMapWidget(QWidget):
         if self._tile_update_pending:
             return
         self._tile_update_pending = True
-        QTimer.singleShot(34, self._flush_tile_update)
+        QTimer.singleShot(80, self._flush_tile_update)
 
     def _flush_tile_update(self) -> None:
         self._tile_update_pending = False
@@ -906,7 +906,7 @@ class JourneyTicketCheckOverlay(QWidget):
         self.setCursor(Qt.CursorShape.ArrowCursor)
         self.setVisible(False)
         self._timer = QTimer(self)
-        self._timer.setInterval(33)
+        self._timer.setInterval(50)
         self._timer.timeout.connect(self._tick)
         self._blink_timer = QTimer(self)
         self._blink_timer.setInterval(420)
@@ -1522,6 +1522,8 @@ class FocusJourneyMapDialog(QDialog):
 
     pauseRequested = pyqtSignal()
     boardingCompleted = pyqtSignal()
+    dismissed = pyqtSignal(bool)
+    minimizedRequested = pyqtSignal()
 
     def __init__(
         self,
@@ -1570,6 +1572,21 @@ class FocusJourneyMapDialog(QDialog):
         self.ticket_overlay.installEventFilter(self)
         self.ticket_overlay.checkedIn.connect(self._complete_ticket_check)
         self.sound_panel = JourneySoundPanel(config=self.config, audio_manager=self.audio_manager, parent=self)
+
+    def closeEvent(self, event) -> None:
+        if hasattr(self.map_widget, "set_motion_paused"):
+            self.map_widget.set_motion_paused(True)
+        if hasattr(self.map_widget, "_camera_timer"):
+            self.map_widget._camera_timer.stop()
+        self.ticket_overlay.hide()
+        self.sound_panel.hide()
+        self.dismissed.emit(bool(self._ticket_checked))
+        super().closeEvent(event)
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange and self.isMinimized():
+            self.minimizedRequested.emit()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -1650,9 +1667,7 @@ class FocusJourneyMapDialog(QDialog):
 
     def _minimize_app(self) -> None:
         self.showMinimized()
-        parent_window = self.parentWidget().window() if self.parentWidget() is not None else None
-        if parent_window is not None and parent_window is not self:
-            parent_window.showMinimized()
+        self.minimizedRequested.emit()
 
     def _toggle_max_restore(self) -> None:
         if self._map_window_maximized:
@@ -1788,6 +1803,17 @@ class FocusJourneyMapDialog(QDialog):
         if hasattr(self.map_widget, "set_motion_paused"):
             self.map_widget.set_motion_paused(self._paused)
         self.map_widget.update_progress(safe_progress, safe_remaining, safe_distance, safe_phase)
+
+    def mark_boarding_complete(self) -> None:
+        """Let the parent continue tracking when the map is dismissed before ticket tear."""
+        self._ticket_checked = True
+        self._awaiting_measurement_start = False
+        self._checked_route_key = self._current_route_key
+        if self._current_route_key is not None:
+            self.config["_focus_journey_checked_route_key"] = repr(self._current_route_key)
+        self.ticket_overlay.hide()
+        if hasattr(self.map_widget, "set_motion_paused"):
+            self.map_widget.set_motion_paused(self._paused)
 
     def _complete_ticket_check(self) -> None:
         self._ticket_checked = True

@@ -28,9 +28,11 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
     QVBoxLayout,
     QWidget,
+    QLayout,
 )
 
 from .theme import get_stylesheet, _theme_tokens
+from .dialog_title_bar import DialogTitleBar
 
 
 # ---------------------------------------------------------------------------
@@ -295,9 +297,9 @@ def _make_dialog_stylesheet(is_dark: bool) -> str:
             background-color: transparent;
             border: none;
             border-radius: 14px;
-            padding: 10px 8px;
-            min-height: 96px;
-            max-height: 108px;
+            padding: 8px 8px;
+            min-height: 118px;
+            max-height: 132px;
             color: {input_text};
             font-size: 12px;
             font-weight: 600;
@@ -351,6 +353,59 @@ def _make_dialog_stylesheet(is_dark: bool) -> str:
             background-color: rgba(255,255,255,0.45);
             color: rgba(8,17,28,0.55);
         }}
+
+        /* ── Report title bar (custom chrome) ── */
+        QFrame#reportTitleBar {{
+            background-color: {header_bg};
+            border-bottom: 1px solid {header_border};
+            border-top-left-radius: 13px;
+            border-top-right-radius: 13px;
+        }}
+        QLabel#reportTitleText {{
+            color: {title_color};
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0.2px;
+        }}
+        QToolButton#titleBarCloseDot,
+        QToolButton#titleBarMinDot,
+        QToolButton#titleBarMaxDot {{
+            min-width: 12px;
+            max-width: 12px;
+            min-height: 12px;
+            max-height: 12px;
+            border-radius: 6px;
+            border: none;
+            padding: 0;
+            background-color: transparent;
+        }}
+        QToolButton#titleBarCloseDot {{
+            background-color: {t.get('titlebar_dot_close', '#ff5f57')};
+        }}
+        QToolButton#titleBarCloseDot:hover {{
+            background-color: {t.get('titlebar_dot_close_hover', '#ff736d')};
+        }}
+        QToolButton#titleBarCloseDot:pressed {{
+            background-color: {t.get('titlebar_dot_close_pressed', '#e14f49')};
+        }}
+        QToolButton#titleBarMinDot {{
+            background-color: {t.get('titlebar_dot_min', '#febc2e')};
+        }}
+        QToolButton#titleBarMinDot:hover {{
+            background-color: {t.get('titlebar_dot_min_hover', '#ffca4c')};
+        }}
+        QToolButton#titleBarMinDot:pressed {{
+            background-color: {t.get('titlebar_dot_min_pressed', '#dea225')};
+        }}
+        QToolButton#titleBarMaxDot {{
+            background-color: {t.get('titlebar_dot_max', '#28c840')};
+        }}
+        QToolButton#titleBarMaxDot:hover {{
+            background-color: {t.get('titlebar_dot_max_hover', '#42d95a')};
+        }}
+        QToolButton#titleBarMaxDot:pressed {{
+            background-color: {t.get('titlebar_dot_max_pressed', '#1faa36')};
+        }}
     """
 
 
@@ -388,6 +443,17 @@ def _airport_distance_km(from_code: str, to_code: str) -> int:
     return int(round(6371.0 * 2.0 * math.asin(math.sqrt(h))))
 
 
+def _round_minutes_to_five(value: int, *, minimum: int = 30, maximum: int = 120) -> int:
+    """Round displayed flight duration to the nearest 5-minute mark."""
+    try:
+        raw = int(float(value))
+    except (TypeError, ValueError):
+        raw = minimum
+    raw = max(minimum, min(maximum, raw))
+    rounded = int(math.floor((raw + 2.5) / 5.0) * 5)
+    return max(minimum, min(maximum, rounded))
+
+
 def _focus_route(
     route_id: str,
     from_code: str,
@@ -400,13 +466,15 @@ def _focus_route(
 ) -> Dict[str, Any]:
     from_data = FOCUS_AIRPORT_DATA[from_code]
     to_data = FOCUS_AIRPORT_DATA[to_code]
+    rounded_minutes = _round_minutes_to_five(duration_minutes)
     return {
         "route_id": route_id,
         "from_code": from_code,
         "to_code": to_code,
         "from_name": str(from_data["name"]),
         "to_name": str(to_data["name"]),
-        "duration_minutes": int(duration_minutes),
+        "duration_minutes": rounded_minutes,
+        "raw_duration_minutes": int(duration_minutes),
         "route_distance_km": _airport_distance_km(from_code, to_code),
         "task_type": task_type,
         "mode": mode,
@@ -473,6 +541,110 @@ FOCUS_ROUTE_PRESETS: List[Dict[str, Any]] = [
 ]
 
 
+FOCUS_ROUTE_SLOT_MINUTES = tuple(range(30, 121, 5))
+
+
+def _route_difficulty_for_minutes(minutes: int) -> str:
+    if minutes <= 35:
+        return "short"
+    if minutes <= 60:
+        return "medium"
+    return "long"
+
+
+def _route_task_type_for_minutes(minutes: int) -> str:
+    if minutes <= 40:
+        return "reading"
+    if minutes <= 60:
+        return "creative"
+    if minutes <= 85:
+        return "study"
+    return "deep_work"
+
+
+def _route_mode_for_minutes(minutes: int) -> str:
+    if minutes >= 100:
+        return "deadline"
+    if minutes >= 80:
+        return "deep"
+    return "normal"
+
+
+def _estimated_focus_minutes(from_code: str, to_code: str) -> int:
+    distance = _airport_distance_km(from_code, to_code)
+    if distance <= 0:
+        return 30
+    # Symbolic focus-flight time: grounded in route distance, but capped to the
+    # app's sub-2-hour session range.
+    return _round_minutes_to_five(int(round(26.0 + (distance / 13.0))))
+
+
+def _generated_route_candidate(from_code: str, to_code: str) -> Dict[str, Any]:
+    minutes = _estimated_focus_minutes(from_code, to_code)
+    return _focus_route(
+        f"auto-{from_code.lower()}-{to_code.lower()}-{minutes:03d}",
+        from_code,
+        to_code,
+        minutes,
+        _route_task_type_for_minutes(minutes),
+        _route_mode_for_minutes(minutes),
+        "Scheduled Focus Flight",
+        _route_difficulty_for_minutes(minutes),
+    )
+
+
+def _candidate_routes_for_origin(origin: str) -> List[Dict[str, Any]]:
+    origin = str(origin or "").strip().upper()
+    candidates = [dict(route) for route in FOCUS_ROUTE_PRESETS if str(route.get("from_code", "")).upper() == origin]
+    for to_code in sorted(FOCUS_AIRPORT_DATA):
+        if to_code == origin:
+            continue
+        candidates.append(_generated_route_candidate(origin, to_code))
+
+    deduped: Dict[tuple[str, int], Dict[str, Any]] = {}
+    for route in candidates:
+        key = (
+            str(route.get("to_code", "")).upper(),
+            int(route.get("raw_duration_minutes", route.get("duration_minutes", 0)) or 0),
+        )
+        if key not in deduped:
+            deduped[key] = route
+    return list(deduped.values())
+
+
+def _build_focus_route_schedule() -> List[Dict[str, Any]]:
+    routes: List[Dict[str, Any]] = []
+    for origin in sorted(FOCUS_AIRPORT_DATA):
+        candidates = _candidate_routes_for_origin(origin)
+        if not candidates:
+            continue
+        for slot_minutes in FOCUS_ROUTE_SLOT_MINUTES:
+            source = min(
+                candidates,
+                key=lambda route: (
+                    abs(int(route.get("raw_duration_minutes", route.get("duration_minutes", 0)) or 0) - slot_minutes),
+                    abs(int(route.get("duration_minutes", 0) or 0) - slot_minutes),
+                    int(route.get("route_distance_km", 0) or 0),
+                    str(route.get("to_code", "")),
+                ),
+            )
+            route = dict(source)
+            route["source_route_id"] = str(source.get("route_id", ""))
+            route["route_id"] = f"slot-{origin.lower()}-{str(route.get('to_code', '')).lower()}-{slot_minutes:03d}"
+            route["duration_minutes"] = int(slot_minutes)
+            route["schedule_slot_minutes"] = int(slot_minutes)
+            route["task_type"] = _route_task_type_for_minutes(slot_minutes)
+            route["mode"] = _route_mode_for_minutes(slot_minutes)
+            route["difficulty"] = _route_difficulty_for_minutes(slot_minutes)
+            route["route_theme"] = str(source.get("route_theme") or "Scheduled Focus Flight")
+            route["short_label"] = f"{origin} -> {route.get('to_code', '')}"
+            routes.append(route)
+    return routes
+
+
+FOCUS_ROUTE_SCHEDULE: List[Dict[str, Any]] = _build_focus_route_schedule()
+
+
 def _route_difficulty_label(route: Dict[str, Any]) -> str:
     difficulty = str(route.get("difficulty", "medium") or "medium")
     return {"short": "Ngắn", "medium": "Vừa", "long": "Dài"}.get(difficulty, "Vừa")
@@ -493,11 +665,11 @@ def _configured_focus_origin(config: Optional[dict]) -> str:
 
 
 def _nearest_focus_routes(minutes: int, limit: int = 3, from_code: str = "") -> List[Dict[str, Any]]:
-    target = max(30, int(minutes or 30))
+    target = _round_minutes_to_five(minutes)
     origin = str(from_code or "").strip().upper()
-    candidate_pool = FOCUS_ROUTE_PRESETS
+    candidate_pool = FOCUS_ROUTE_SCHEDULE or FOCUS_ROUTE_PRESETS
     if origin in FOCUS_AIRPORT_DATA:
-        origin_routes = [route for route in FOCUS_ROUTE_PRESETS if str(route.get("from_code", "")).upper() == origin]
+        origin_routes = [route for route in candidate_pool if str(route.get("from_code", "")).upper() == origin]
         if origin_routes:
             candidate_pool = origin_routes
     scored = sorted(
@@ -508,7 +680,15 @@ def _nearest_focus_routes(minutes: int, limit: int = 3, from_code: str = "") -> 
             str(route.get("to_code", "")),
         ),
     )
-    return scored[:limit]
+    nearby = scored[:limit]
+    return sorted(
+        nearby,
+        key=lambda route: (
+            int(route.get("duration_minutes", 0) or 0),
+            int(route.get("route_distance_km", 0) or 0),
+            str(route.get("to_code", "")),
+        ),
+    )
 
 
 class DurationTimelineSlider(QWidget):
@@ -692,15 +872,8 @@ class DurationTimelineSlider(QWidget):
             x = self._x_for_value(value)
             major = (value % 10 == 0) or value in (self._minimum, self._maximum)
             top = 38 if major else 44
-            bottom = 60 if major else 56
+            bottom = 56 if major else 52
             painter.drawLine(int(x), top, int(x), bottom)
-
-        painter.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
-        painter.setPen(label)
-        label_values = self._label_values()
-        for value in label_values:
-            x = self._x_for_value(value)
-            painter.drawText(int(x - 30), 56, 60, 18, Qt.AlignmentFlag.AlignCenter, self._fmt_minutes(value))
 
         handle_x = self._x_for_value(self._value)
         triangle = QPainterPath()
@@ -734,7 +907,7 @@ class FocusRouteCardButton(QPushButton):
         self._route: Dict[str, Any] = {}
         self.setCheckable(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumHeight(118)
+        self.setMinimumHeight(128)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
     def set_route(self, route: Dict[str, Any]) -> None:
@@ -761,7 +934,7 @@ class FocusRouteCardButton(QPushButton):
         painter.drawRoundedRect(rect, 16, 16)
 
         code = str(self._route.get("to_code") or "DAD")
-        badge = QRectF(rect.left() + 14, rect.top() + 14, 70, 32)
+        badge = QRectF(rect.left() + 14, rect.top() + 14, 76, 32)
         painter.setPen(QPen(QColor("#000814"), 2))
         painter.setBrush(QBrush(badge_bg))
         painter.drawRoundedRect(badge, 7, 7)
@@ -771,19 +944,29 @@ class FocusRouteCardButton(QPushButton):
 
         name = str(self._route.get("to_name") or code)
         minutes = int(self._route.get("duration_minutes", 0) or 0)
+        distance = int(self._route.get("route_distance_km", 0) or 0)
+        name_rect = QRectF(rect.left() + 14, rect.top() + 58, rect.width() - 28, 24)
         painter.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
         painter.setPen(text)
-        painter.drawText(
-            QRectF(rect.left() + 14, rect.top() + 58, rect.width() - 28, 24),
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        display_name = painter.fontMetrics().elidedText(
             name,
+            Qt.TextElideMode.ElideRight,
+            max(1, int(name_rect.width())),
+        )
+        painter.drawText(
+            name_rect,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            display_name,
         )
         painter.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
         painter.setPen(muted)
+        meta = f"{minutes}m"
+        if distance > 0:
+            meta = f"{meta} · {distance} km"
         painter.drawText(
-            QRectF(rect.left() + 14, rect.top() + 84, rect.width() - 28, 22),
+            QRectF(rect.left() + 14, rect.top() + 88, rect.width() - 28, 22),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            f"{minutes}m",
+            meta,
         )
 
 
@@ -1118,7 +1301,7 @@ class PlaneSeatSelectionWidget(QWidget):
     def _task_panel_rect(self) -> QRectF:
         body = self._plane_rect()
         width = min(560.0, self.width() * 0.88)
-        height = 166.0
+        height = 190.0
         selected_rect = next((rect for seat, rect in self._all_seat_rects() if seat == self._selected_seat), None)
         if selected_rect is not None:
             y = selected_rect.top() - height - 20.0
@@ -1133,7 +1316,7 @@ class PlaneSeatSelectionWidget(QWidget):
         panel = self._task_panel_rect()
         chip_h = 38.0
         x = panel.left() + 22.0
-        y = panel.top() + 70.0
+        y = panel.top() + 96.0
         rows: List[tuple[str, str, str, QRectF]] = []
         for index, (label, value, color) in enumerate(self.TASK_OPTIONS):
             chip_w = {
@@ -1390,10 +1573,16 @@ class PlaneSeatSelectionWidget(QWidget):
 
         painter.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
         painter.setPen(QColor(225, 228, 232, 170))
-        painter.drawText(QRectF(panel.left() + 22, panel.top() + 16, panel.width() - 44, 24), f"Ghế: {self._selected_seat}")
+        painter.drawText(QRectF(panel.left() + 22, panel.top() + 16, panel.width() - 44, 24), f"Vị trí tập trung: {self._selected_seat}")
         painter.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
         painter.setPen(QColor("#ffffff"))
-        painter.drawText(QRectF(panel.left() + 22, panel.top() + 42, panel.width() - 44, 24), "Bạn sẽ tập trung vào việc gì?")
+        painter.drawText(QRectF(panel.left() + 22, panel.top() + 42, panel.width() - 44, 24), "Chọn nhóm nhiệm vụ cho phiên")
+        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Medium))
+        painter.setPen(QColor(225, 228, 232, 165))
+        painter.drawText(
+            QRectF(panel.left() + 22, panel.top() + 66, panel.width() - 44, 22),
+            "Ghế là mốc cá nhân hoá hành trình, không ảnh hưởng điểm.",
+        )
 
         for label, value, color, rect in self._task_chip_rects():
             selected = value == self._selected_task_type
@@ -1729,7 +1918,8 @@ class LegacySessionContextDialog(_BaseContextDialog):
             "deep": "UI tối giản, ít cảnh báo hơn. Chỉ thông báo khi rủi ro cao.",
             "deadline": "Theo dõi sát hơn, cảnh báo sớm hơn khi gần hết thời gian.",
         }
-        self._mode_hint.setText(hints.get(mode, ""))
+        if self._mode_hint is not None:
+            self._mode_hint.setText(hints.get(mode, ""))
 
     def get_payload(self) -> Dict[str, Any]:
         mode = str(self.session_mode_combo.currentData() or "normal")
@@ -1772,13 +1962,18 @@ class SessionContextDialog(_BaseContextDialog):
     def __init__(self, *, config: Optional[dict] = None, parent: Optional[QWidget] = None):
         super().__init__("Thiết lập phiên làm việc", "", config=config, min_width=760, parent=parent)
         self._config = dict(config or {})
-        self.duration_source = str(self._config.get("duration_source", "personalized") or "personalized")
+        self.setGraphicsEffect(None)
+        self.duration_source = "personalized"
         self.recommended_minutes = self._recommended_work_minutes()
         self.default_task_type = str(self._config.get("task_type", "deep_work") or "deep_work")
         self.current_origin_code = _configured_focus_origin(self._config)
         self.selected_route: Dict[str, Any] = {}
         self._route_buttons: List[QPushButton] = []
         self._displayed_routes: List[Dict[str, Any]] = []
+
+        if self.layout() is not None:
+            self.layout().setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+
         self._build_ui()
 
     def _recommended_work_minutes(self) -> int:
@@ -1818,9 +2013,14 @@ class SessionContextDialog(_BaseContextDialog):
         self.custom_btn.clicked.connect(lambda: self._set_duration_source("custom"))
         self._add_row(c_layout, "Chọn thời lượng", duration_box)
 
+        self.custom_duration_panel = QWidget()
+        custom_layout = QVBoxLayout(self.custom_duration_panel)
+        custom_layout.setContentsMargins(0, 0, 0, 0)
+        custom_layout.setSpacing(8)
+
         self.recommendation_label = QLabel("")
         self.recommendation_label.setObjectName("mutedLabel")
-        c_layout.addWidget(self.recommendation_label)
+        custom_layout.addWidget(self.recommendation_label)
 
         slider_box = QWidget()
         slider_layout = QHBoxLayout(slider_box)
@@ -1832,17 +2032,19 @@ class SessionContextDialog(_BaseContextDialog):
         self.duration_slider.setPageStep(5)
         self.duration_slider.setTickInterval(5)
         self.planned_minutes_spin = self._make_spinbox(30, 120, " phút", self.recommended_minutes)
+        self.planned_minutes_spin.setSingleStep(5)
         self.planned_minutes_spin.setFixedWidth(96)
         self.planned_minutes_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
         slider_layout.addWidget(self.duration_slider, 1)
         slider_layout.addWidget(self.planned_minutes_spin)
-        c_layout.addWidget(slider_box)
+        custom_layout.addWidget(slider_box)
         self.duration_slider.valueChanged.connect(self._on_duration_slider_changed)
         self.planned_minutes_spin.valueChanged.connect(self._on_duration_spin_changed)
 
         self.deadline_minutes_spin = self._make_spinbox(
             30, 120, " phút", max(30, int(self._config.get("deadline_focus_minutes", 45) or 45))
         )
+        self.deadline_minutes_spin.setSingleStep(5)
         self.deadline_row = QWidget()
         deadline_layout = QHBoxLayout(self.deadline_row)
         deadline_layout.setContentsMargins(0, 8, 0, 8)
@@ -1854,29 +2056,29 @@ class SessionContextDialog(_BaseContextDialog):
         c_layout.addWidget(self.deadline_row)
 
         origin_name = FOCUS_AIRPORT_DATA.get(self.current_origin_code, {}).get("name", self.current_origin_code)
-        route_title = QLabel(f"Chọn chuyến tập trung từ {self.current_origin_code} - {origin_name}")
-        route_title.setObjectName("rowLabel")
-        c_layout.addWidget(route_title)
+        route_title = QLabel(f"Chọn chuyến làm việc từ {self.current_origin_code} - {origin_name}")
+        self.route_title = route_title
+        self.route_title.setObjectName("rowLabel")
+        self.route_title.setContentsMargins(0, 4, 0, 2)
+        custom_layout.addWidget(self.route_title)
         self.route_list = QWidget()
-        self.route_list.setMinimumHeight(132)
-        self.route_list.setMaximumHeight(140)
+        self.route_list.setMinimumHeight(150)
+        self.route_list.setMaximumHeight(156)
         self.route_layout = QHBoxLayout(self.route_list)
-        self.route_layout.setContentsMargins(0, 0, 0, 0)
-        self.route_layout.setSpacing(10)
-        c_layout.addWidget(self.route_list)
+        self.route_layout.setContentsMargins(0, 2, 0, 0)
+        self.route_layout.setSpacing(12)
+        custom_layout.addWidget(self.route_list)
         for index in range(3):
             btn = FocusRouteCardButton(is_dark=self._is_dark)
             btn.setObjectName("routeCard")
             btn.clicked.connect(lambda checked=False, i=index: self._select_route_by_index(i))
             self.route_layout.addWidget(btn)
             self._route_buttons.append(btn)
+        c_layout.addWidget(self.custom_duration_panel)
 
         self.note_input = QLineEdit()
-        self.note_input.setPlaceholderText("Ghi chú ngắn (tuỳ chọn)")
-        self._add_row(c_layout, "Ghi chú", self.note_input)
-
         self._mode_hint = self._make_hint("")
-        c_layout.addWidget(self._mode_hint)
+        self._mode_hint.hide()
         self._body.addWidget(card)
         self._make_footer("Bỏ qua", "Tiếp theo")
 
@@ -1900,6 +2102,7 @@ class SessionContextDialog(_BaseContextDialog):
         is_deadline = mode == "deadline"
         self.deadline_minutes_spin.setEnabled(is_deadline)
         self.deadline_row.setVisible(is_deadline)
+
         max_minutes = 120
         self.duration_slider.setMaximum(max_minutes)
         self.planned_minutes_spin.setMaximum(max_minutes)
@@ -1915,7 +2118,7 @@ class SessionContextDialog(_BaseContextDialog):
         self._refresh_routes()
 
     def _round_duration(self, value: int) -> int:
-        return int(max(30, min(self.duration_slider.maximum(), round(int(value) / 5) * 5)))
+        return _round_minutes_to_five(value, maximum=self.duration_slider.maximum())
 
     def _set_duration_source(self, source: str) -> None:
         self.duration_source = "custom" if source == "custom" else "personalized"
@@ -1925,6 +2128,8 @@ class SessionContextDialog(_BaseContextDialog):
         self.planned_minutes_spin.setEnabled(self.duration_source == "custom")
         if self.duration_source == "personalized":
             self._set_duration_value(self.recommended_minutes)
+        if hasattr(self, "custom_duration_panel"):
+            self.custom_duration_panel.setVisible(self.duration_source == "custom")
         self.recommendation_label.setText(f"Gợi ý cho bạn: {int(self.recommended_minutes)} phút")
         self._refresh_routes()
 
@@ -1962,7 +2167,15 @@ class SessionContextDialog(_BaseContextDialog):
                 btn.hide()
             return
         if not self.selected_route or self.selected_route.get("route_id") not in {r["route_id"] for r in routes}:
-            self.selected_route = dict(routes[0])
+            target_minutes = int(self.planned_minutes_spin.value())
+            self.selected_route = dict(min(
+                routes,
+                key=lambda route: (
+                    abs(int(route.get("duration_minutes", 0) or 0) - target_minutes),
+                    int(route.get("duration_minutes", 0) or 0),
+                    str(route.get("to_code", "")),
+                ),
+            ))
 
         for index, btn in enumerate(self._route_buttons):
             if index >= len(routes):
@@ -1989,7 +2202,8 @@ class SessionContextDialog(_BaseContextDialog):
 
     def get_payload(self) -> Dict[str, Any]:
         mode = str(self.session_mode_combo.currentData() or "normal")
-        route = dict(self.selected_route or {})
+        journey_enabled = self.duration_source == "custom"
+        route = dict(self.selected_route or {}) if journey_enabled else {}
         return {
             "goal": str(self.goal_input.text() or "").strip(),
             "task_type": self.default_task_type,
@@ -1997,8 +2211,9 @@ class SessionContextDialog(_BaseContextDialog):
             "planned_minutes": int(self.planned_minutes_spin.value()),
             "deadline_mode": mode == "deadline",
             "deadline_minutes": int(self.deadline_minutes_spin.value()) if mode == "deadline" else 0,
-            "note": str(self.note_input.text() or "").strip(),
+            "note": "",
             "duration_source": self.duration_source,
+            "journey_enabled": journey_enabled,
             "journey_origin_code": self.current_origin_code,
             "selected_route_id": str(route.get("route_id", "")),
             "selected_route_label": str(route.get("short_label", "")),
@@ -2022,7 +2237,7 @@ class ContextCheckInDialog(_BaseContextDialog):
     CHECKIN_OPTIONS = (
         ("Đang đúng task",             "on_task"),
         ("Lệch nhẹ, có thể quay lại", "slight_drift"),
-        ("Đang mất tập trung",         "off_task"),
+        ("Lệch khỏi nhiệm vụ",        "off_task"),
         ("Mệt, cần nghỉ ngắn",        "need_break"),
     )
 
@@ -2036,7 +2251,7 @@ class ContextCheckInDialog(_BaseContextDialog):
     ):
         super().__init__(
             "Check-in nhanh",
-            "Hệ thống phát hiện rủi ro giảm tập trung — bạn đang ở trạng thái nào?",
+            "Hệ thống ghi nhận rủi ro lệch khỏi nhiệm vụ — bạn đang ở trạng thái nào?",
             config=config,
             min_width=460,
             parent=parent,
@@ -2209,7 +2424,7 @@ class SessionExitDialog(_BaseContextDialog):
 
         focus_s = int(s.get("focus_seconds", 0) or 0)
         fm, fs = divmod(focus_s, 60)
-        _row("Thời gian hiệu quả", f"{fm}p {fs}s")
+        _row("Thời gian làm việc ổn định", f"{fm}p {fs}s")
 
         avg_score = float(s.get("avg_score", 0.0) or 0.0)
         _row("Mức sẵn sàng TB", f"{avg_score:.0f}")
@@ -2275,7 +2490,7 @@ class LegacySessionBoardingPassDialog(_BaseContextDialog):
         parent: Optional[QWidget] = None,
     ):
         super().__init__(
-            "Hành trình tập trung",
+            "Hành trình làm việc",
             "",
             config=config,
             min_width=480,
@@ -2374,7 +2589,7 @@ class SessionBoardingPassDialog(_BaseContextDialog):
         config: Optional[dict] = None,
         parent: Optional[QWidget] = None,
     ):
-        super().__init__("Hành trình tập trung", "", config=config, min_width=620, parent=parent)
+        super().__init__("Hành trình làm việc", "", config=config, min_width=620, parent=parent)
         self._ctx = context_payload
         header = self._root.itemAt(0).widget() if self._root.count() else None
         if header is not None:
@@ -2409,7 +2624,11 @@ class SessionBoardingPassDialog(_BaseContextDialog):
 # ---------------------------------------------------------------------------
 
 class SessionHabitReportDialog(_BaseContextDialog):
-    """Show a detailed post-session habit report with trends and suggestions."""
+    """Show a detailed post-session habit report with trends and suggestions.
+
+    Uses a custom title bar with macOS-style window dots (close / minimize /
+    maximize-restore) instead of the native dialog header.
+    """
 
     def __init__(
         self,
@@ -2419,7 +2638,7 @@ class SessionHabitReportDialog(_BaseContextDialog):
         parent: Optional[QWidget] = None,
     ):
         super().__init__(
-            "Báo cáo phiên làm việc",
+            "Kết quả nhịp làm việc",
             "",
             config=config,
             min_width=540,
@@ -2427,6 +2646,18 @@ class SessionHabitReportDialog(_BaseContextDialog):
         )
         self._report = habit_report
         self._build_ui()
+
+    # ── Override header with custom title bar ──────────────────────────────
+
+    def _build_header(self, title: str, subtitle: str) -> None:
+        """Replace the default dialog header with a custom 3-dot title bar."""
+        _ = subtitle  # unused
+        self._title_bar = DialogTitleBar(
+            title,
+            is_dark=self._is_dark,
+            parent=self._container,
+        )
+        self._root.addWidget(self._title_bar)
 
     def _build_ui(self) -> None:
         self._add_body_padding(top=14, bottom=8)
@@ -2458,14 +2689,14 @@ class SessionHabitReportDialog(_BaseContextDialog):
         _row(ov_layout, "Tổng thời gian", dur_str)
 
         eff_ratio = float(r.get("effective_work_ratio", 0.0) or 0.0)
-        _row(ov_layout, "Thời gian hiệu quả", f"{eff_ratio:.0%}")
+        _row(ov_layout, "Làm việc ổn định", f"{eff_ratio:.0%}")
 
         avg_wr = float(r.get("avg_work_readiness", 0.0) or 0.0)
         _row(ov_layout, "Mức sẵn sàng TB", f"{avg_wr:.0f}")
 
         decline_min = r.get("decline_start_minutes")
         if decline_min is not None:
-            _row(ov_layout, "Bắt đầu giảm hiệu quả", f"sau {decline_min:.0f} phút")
+            _row(ov_layout, "Bắt đầu giảm ổn định", f"sau {decline_min:.0f} phút")
 
         self._body_add(overview_card)
 
@@ -2485,11 +2716,11 @@ class SessionHabitReportDialog(_BaseContextDialog):
 
         self._body_add(trend_card)
 
-        # ── Hiệu quả nghỉ ──
+        # ── Phục hồi sau nghỉ ──
         breaks: List[Dict[str, Any]] = r.get("break_effectiveness", []) or []
         if breaks:
             break_card, br_layout = self._make_form_card()
-            br_header = QLabel("Hiệu quả nghỉ")
+            br_header = QLabel("Phục hồi sau nghỉ")
             br_header.setObjectName("sectionTitle")
             br_layout.addWidget(br_header)
             for i, b in enumerate(breaks[:4], 1):
@@ -2497,7 +2728,7 @@ class SessionHabitReportDialog(_BaseContextDialog):
                 break_type = str(b.get("break_type", "nghỉ") or "nghỉ")
                 label = f"Lần {i} ({break_type})"
                 if transfer >= 0.7:
-                    verdict = f"Hiệu quả ({transfer:.0%})"
+                    verdict = f"Phục hồi tốt ({transfer:.0%})"
                 elif transfer >= 0.4:
                     verdict = f"Trung bình ({transfer:.0%})"
                 else:

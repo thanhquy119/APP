@@ -11,11 +11,11 @@ import json
 import logging
 import statistics
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .google_sheets_sync import GoogleSheetsSessionSync
+from .supabase_sync import SupabaseSessionSync
 from .personalization import (
     PersonalizationManager,
     UserBaseline,
@@ -38,7 +38,7 @@ class SessionAnalyticsStore:
         self,
         base_dir: Optional[Path] = None,
         max_sessions: int = 300,
-        google_config: Optional[Dict[str, Any]] = None,
+        cloud_config: Optional[Dict[str, Any]] = None,
     ):
         self.base_dir = base_dir or Path("analytics") / "profiles"
         self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -47,13 +47,13 @@ class SessionAnalyticsStore:
         self.baseline_store = UserBaselineStore()
         self.personalization_manager = PersonalizationManager(self.baseline_store)
 
-        self.google_sync = GoogleSheetsSessionSync()
-        if google_config:
-            self.configure_google_sheets(google_config)
+        self.supabase_sync = SupabaseSessionSync()
+        if cloud_config:
+            self.configure_supabase(cloud_config)
 
-    def configure_google_sheets(self, app_config: Dict[str, Any]) -> None:
-        """Apply Google Sheets sync settings from app config."""
-        self.google_sync.configure_from_app_config(app_config)
+    def configure_supabase(self, app_config: Dict[str, Any]) -> None:
+        """Apply Supabase sync settings from app config."""
+        self.supabase_sync.configure_from_app_config(app_config)
 
     @staticmethod
     def sanitize_profile_name(profile_name: str) -> str:
@@ -118,6 +118,31 @@ class SessionAnalyticsStore:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
+    @staticmethod
+    def _sessions_after_baseline_reset(
+        profile: Dict[str, Any],
+        sessions: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Keep old history for reports but exclude it from a reset baseline."""
+        try:
+            reset_at = int(float(profile.get("baseline_reset_at", 0) or 0))
+        except (TypeError, ValueError):
+            reset_at = 0
+        if reset_at <= 0:
+            return list(sessions or [])
+
+        filtered: List[Dict[str, Any]] = []
+        for session in sessions or []:
+            if not isinstance(session, dict):
+                continue
+            try:
+                ts = int(float(session.get("timestamp", 0) or 0))
+            except (TypeError, ValueError):
+                ts = 0
+            if ts >= reset_at:
+                filtered.append(session)
+        return filtered
+
     def get_recommendation(
         self,
         profile_name: str,
@@ -148,13 +173,15 @@ class SessionAnalyticsStore:
         This is the main integration point for UI/engine personalization flow.
         """
         profile = self.load_profile(profile_name)
-        sessions = profile.get("sessions", [])
+        all_sessions = profile.get("sessions", [])
+        sessions = self._sessions_after_baseline_reset(profile, all_sessions)
 
         baseline = self._load_or_refresh_baseline(
             profile_name=profile_name,
             sessions=sessions,
             default_work=default_work,
             default_break=default_break,
+            reset_at=profile.get("baseline_reset_at"),
         )
 
         recommendation = self._build_recommendation(
@@ -188,12 +215,13 @@ class SessionAnalyticsStore:
         default_break: int = 5,
     ) -> Dict[str, Any]:
         profile = self.load_profile(profile_name)
-        sessions = profile.get("sessions", [])
+        sessions = self._sessions_after_baseline_reset(profile, profile.get("sessions", []))
         baseline = self._load_or_refresh_baseline(
             profile_name=profile_name,
             sessions=sessions,
             default_work=default_work,
             default_break=default_break,
+            reset_at=profile.get("baseline_reset_at"),
         )
         return baseline.to_dict()
 
@@ -205,12 +233,13 @@ class SessionAnalyticsStore:
         focus_engine_defaults: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         profile = self.load_profile(profile_name)
-        sessions = profile.get("sessions", [])
+        sessions = self._sessions_after_baseline_reset(profile, profile.get("sessions", []))
         baseline = self._load_or_refresh_baseline(
             profile_name=profile_name,
             sessions=sessions,
             default_work=default_work,
             default_break=default_break,
+            reset_at=profile.get("baseline_reset_at"),
         )
         thresholds = self.personalization_manager.build_thresholds(
             profile_name=profile_name,
@@ -218,6 +247,92 @@ class SessionAnalyticsStore:
             focus_defaults=focus_engine_defaults,
         )
         return thresholds.to_dict()
+
+    def get_personalization_status(self, profile_name: str) -> Dict[str, Any]:
+        """Return lightweight baseline status for UI."""
+        profile = self.load_profile(profile_name)
+        sessions = self._sessions_after_baseline_reset(profile, profile.get("sessions", []))
+        eligible_count = 0
+        for session in sessions:
+            duration = self._safe_float(session.get("session_seconds_cleaned"))
+            if duration is None:
+                duration = self._safe_float(session.get("session_seconds"))
+            if duration is not None and is_session_eligible_for_personalization(session, duration):
+                eligible_count += 1
+
+        recommendation = dict(profile.get("recommendation", {}) or {})
+        baseline_payload = dict(profile.get("baseline", {}) or {})
+        stage = str(
+            recommendation.get("adaptation_stage")
+            or baseline_payload.get("adaptation_stage")
+            or personalization_stage(eligible_count)
+        )
+        if eligible_count < 3:
+            label = "Chưa đủ dữ liệu"
+            stage = "cold_start"
+        elif eligible_count <= 7:
+            label = "Đang học"
+            stage = "hybrid"
+        else:
+            label = "Đã có baseline tạm"
+            stage = "personalized"
+
+        try:
+            confidence = float(recommendation.get("confidence", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+
+        return {
+            "profile_name": profile_name,
+            "label": label,
+            "stage": stage,
+            "eligible_sessions": int(eligible_count),
+            "based_on_sessions": int(recommendation.get("based_on_sessions", eligible_count) or eligible_count),
+            "confidence": max(0.0, min(1.0, confidence)),
+            "baseline_reset_at": int(profile.get("baseline_reset_at", 0) or 0),
+        }
+
+    def reset_profile_baseline(
+        self,
+        profile_name: str,
+        *,
+        default_work: int = 25,
+        default_break: int = 5,
+    ) -> Dict[str, Any]:
+        """Reset only the personalization baseline/recommendation for one profile."""
+        profile_name = (profile_name or "default").strip() or "default"
+        now = int(time.time())
+        profile = self.load_profile(profile_name)
+        safe_work = int(max(15, min(60, int(default_work or 25))))
+        safe_break = int(max(3, min(20, int(default_break or 5))))
+        baseline = UserBaseline(
+            profile_name=profile_name,
+            session_count=0,
+            recommended_work_minutes=safe_work,
+            recommended_break_minutes=safe_break,
+            personalization_weight=0.0,
+            last_quality_score=0.0,
+            updated_at=now,
+        )
+        recommendation = {
+            "work_minutes": safe_work,
+            "break_minutes": safe_break,
+            "confidence": 0.0,
+            "reason": "Baseline reset for current profile",
+            "based_on_sessions": 0,
+            "adaptation_stage": "cold_start",
+        }
+
+        profile["baseline_reset_at"] = now
+        profile["baseline"] = baseline.to_dict()
+        profile["recommendation"] = recommendation
+        self.save_profile(profile_name, profile)
+        self.baseline_store.save_baseline(baseline)
+
+        baseline_payload = baseline.to_dict()
+        baseline_payload["adaptation_stage"] = "cold_start"
+        self.supabase_sync.upsert_user_baseline(baseline_payload)
+        return self.get_personalization_status(profile_name)
 
     @staticmethod
     def _safe_float(value: Any) -> Optional[float]:
@@ -522,15 +637,16 @@ class SessionAnalyticsStore:
         if len(sessions) > self.max_sessions:
             sessions = sessions[-self.max_sessions:]
 
+        learning_sessions = self._sessions_after_baseline_reset(profile, sessions)
         baseline = self.baseline_store.update_from_sessions(
             profile_name=profile_name,
-            sessions=sessions,
+            sessions=learning_sessions,
             default_work=default_work,
             default_break=default_break,
         )
 
         recommendation = self._build_recommendation(
-            sessions,
+            learning_sessions,
             default_work=default_work,
             default_break=default_break,
             baseline=baseline,
@@ -543,7 +659,7 @@ class SessionAnalyticsStore:
         self.save_profile(profile_name, profile)
 
         # Best-effort remote sync. Never block or fail local analytics.
-        self.google_sync.append_session(cleaned_record)
+        self.supabase_sync.append_session(cleaned_record)
         baseline_payload = baseline.to_dict()
         baseline_payload["adaptation_stage"] = personalization_stage(baseline.session_count)
         recent_quality_scores: List[float] = []
@@ -557,7 +673,7 @@ class SessionAnalyticsStore:
             if recent_quality_scores
             else float(cleaned_record.get("analytics_quality_score", 0.0) or 0.0)
         )
-        self.google_sync.upsert_user_baseline(baseline_payload)
+        self.supabase_sync.upsert_user_baseline(baseline_payload)
 
         return recommendation
 
@@ -567,6 +683,7 @@ class SessionAnalyticsStore:
         sessions: List[Dict[str, Any]],
         default_work: int,
         default_break: int,
+        reset_at: Any = 0,
     ) -> UserBaseline:
         baseline = self.baseline_store.update_from_sessions(
             profile_name=profile_name,
@@ -575,10 +692,19 @@ class SessionAnalyticsStore:
             default_break=default_break,
         )
 
-        # Fallback: when local history is sparse, try to hydrate from Google Sheets.
+        # Fallback: when local history is sparse, try to hydrate from Supabase.
         if baseline.session_count < 3:
-            remote = self.google_sync.load_user_baseline(profile_name)
-            if remote:
+            remote = self.supabase_sync.load_user_baseline(profile_name)
+            remote_updated_at = 0
+            try:
+                remote_updated_at = int(float((remote or {}).get("updated_at", 0) or 0))
+            except (TypeError, ValueError):
+                remote_updated_at = 0
+            try:
+                reset_ts = int(float(reset_at or 0))
+            except (TypeError, ValueError):
+                reset_ts = 0
+            if remote and remote_updated_at >= reset_ts:
                 baseline = self.baseline_store.merge_remote_baseline(profile_name, remote)
 
         return baseline
@@ -796,6 +922,506 @@ class SessionAnalyticsStore:
             "based_on_sessions": len(valid),
             "note": "",
         }
+
+    def build_work_rhythm_summary(
+        self,
+        profile_name: str,
+        *,
+        live_session: Optional[Dict[str, Any]] = None,
+        now_ts: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Build day/week/month work-rhythm aggregates for the results dashboard.
+
+        The report prioritizes actionable indicators:
+        - effective work time and ratio
+        - work-readiness score
+        - distraction density
+        - state composition and best time window
+        """
+        now_value = int(now_ts or time.time())
+        now_dt = datetime.fromtimestamp(now_value)
+        profile = self.load_profile(profile_name)
+        sessions = list(profile.get("sessions", []) or [])
+        if isinstance(live_session, dict) and live_session:
+            live_payload = dict(live_session)
+            live_payload.setdefault("timestamp", now_value)
+            live_payload["_is_live_session"] = True
+            sessions.append(live_payload)
+
+        day_start_dt = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start_dt = (now_dt - timedelta(days=now_dt.weekday())).replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        month_start_dt = now_dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        periods = {
+            "day": self._build_work_rhythm_period(
+                sessions,
+                start_dt=day_start_dt,
+                end_dt=now_dt,
+                bucket_mode="hour",
+                label="Hôm nay",
+            ),
+            "week": self._build_work_rhythm_period(
+                sessions,
+                start_dt=week_start_dt,
+                end_dt=now_dt,
+                bucket_mode="day",
+                label="Tuần này",
+            ),
+            "month": self._build_work_rhythm_period(
+                sessions,
+                start_dt=month_start_dt,
+                end_dt=now_dt,
+                bucket_mode="day",
+                label="Tháng này",
+            ),
+        }
+
+        return {
+            "profile_name": profile_name,
+            "generated_at": now_value,
+            "recommendation": dict(profile.get("recommendation", {}) or {}),
+            "periods": periods,
+        }
+
+    @classmethod
+    def _build_work_rhythm_period(
+        cls,
+        sessions: List[Dict[str, Any]],
+        *,
+        start_dt: datetime,
+        end_dt: datetime,
+        bucket_mode: str,
+        label: str,
+    ) -> Dict[str, Any]:
+        start_ts = int(start_dt.timestamp())
+        end_ts = int(end_dt.timestamp())
+        buckets = cls._make_work_rhythm_buckets(start_dt, end_dt, bucket_mode)
+        bucket_by_key = {item["key"]: item for item in buckets}
+
+        totals = cls._empty_work_rhythm_accumulator()
+        used_sessions: List[Dict[str, Any]] = []
+
+        for session in sessions:
+            if not isinstance(session, dict):
+                continue
+            ts = cls._session_timestamp(session)
+            if ts is None or ts < start_ts or ts > end_ts:
+                continue
+            duration = cls._session_duration_seconds(session)
+            if duration <= 0.0:
+                continue
+
+            used_sessions.append(session)
+            cls._add_session_to_work_rhythm_accumulator(totals, session)
+
+            bucket_key = cls._work_rhythm_bucket_key(datetime.fromtimestamp(ts), bucket_mode)
+            bucket = bucket_by_key.get(bucket_key)
+            if bucket is not None:
+                cls._add_session_to_work_rhythm_accumulator(bucket, session)
+
+        points = [cls._finalize_work_rhythm_bucket(item) for item in buckets]
+        result = cls._finalize_work_rhythm_period(
+            totals,
+            label=label,
+            points=points,
+            sessions=used_sessions,
+        )
+        result["start_timestamp"] = start_ts
+        result["end_timestamp"] = end_ts
+        return result
+
+    @staticmethod
+    def _empty_work_rhythm_accumulator() -> Dict[str, Any]:
+        return {
+            "session_count": 0,
+            "total_seconds": 0.0,
+            "focus_seconds": 0.0,
+            "score_weighted_sum": 0.0,
+            "score_weight": 0.0,
+            "distraction_count": 0.0,
+            "break_count": 0.0,
+            "state_seconds": {
+                "focused": 0.0,
+                "distraction": 0.0,
+                "fatigue": 0.0,
+                "away": 0.0,
+                "uncertain": 0.0,
+            },
+            "fatigue_onset_values": [],
+            "live_session_included": False,
+        }
+
+    @classmethod
+    def _make_work_rhythm_buckets(
+        cls,
+        start_dt: datetime,
+        end_dt: datetime,
+        bucket_mode: str,
+    ) -> List[Dict[str, Any]]:
+        buckets: List[Dict[str, Any]] = []
+        if bucket_mode == "hour":
+            cursor = start_dt
+            while cursor <= end_dt:
+                bucket = cls._empty_work_rhythm_accumulator()
+                bucket.update(
+                    {
+                        "key": cls._work_rhythm_bucket_key(cursor, bucket_mode),
+                        "label": f"{cursor.hour:02d}h",
+                    }
+                )
+                buckets.append(bucket)
+                cursor += timedelta(hours=1)
+            return buckets
+
+        cursor = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        last = end_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        while cursor <= last:
+            bucket = cls._empty_work_rhythm_accumulator()
+            bucket.update(
+                {
+                    "key": cls._work_rhythm_bucket_key(cursor, bucket_mode),
+                    "label": cursor.strftime("%d/%m"),
+                }
+            )
+            buckets.append(bucket)
+            cursor += timedelta(days=1)
+        return buckets
+
+    @staticmethod
+    def _work_rhythm_bucket_key(dt: datetime, bucket_mode: str) -> str:
+        if bucket_mode == "hour":
+            return dt.strftime("%Y-%m-%d %H")
+        return dt.strftime("%Y-%m-%d")
+
+    @staticmethod
+    def _session_timestamp(session: Dict[str, Any]) -> Optional[int]:
+        try:
+            value = session.get("timestamp")
+            if value is None:
+                return None
+            return int(float(value))
+        except (TypeError, ValueError, OSError):
+            return None
+
+    @staticmethod
+    def _session_metric(session: Dict[str, Any], *keys: str, default: float = 0.0) -> float:
+        for key in keys:
+            try:
+                value = session.get(key)
+                if value is not None and value != "":
+                    return float(value)
+            except (TypeError, ValueError):
+                continue
+        return float(default)
+
+    @classmethod
+    def _session_duration_seconds(cls, session: Dict[str, Any]) -> float:
+        return max(
+            0.0,
+            cls._session_metric(
+                session,
+                "session_seconds_cleaned",
+                "session_seconds",
+                default=0.0,
+            ),
+        )
+
+    @classmethod
+    def _session_focus_seconds(cls, session: Dict[str, Any]) -> float:
+        return max(
+            0.0,
+            cls._session_metric(
+                session,
+                "focus_seconds_cleaned",
+                "focus_seconds",
+                "focus_seconds_display",
+                default=0.0,
+            ),
+        )
+
+    @classmethod
+    def _session_avg_score(cls, session: Dict[str, Any]) -> float:
+        return cls._clamp(
+            cls._session_metric(
+                session,
+                "avg_score_cleaned",
+                "avg_score",
+                "avg_score_display",
+                default=0.0,
+            ),
+            0.0,
+            100.0,
+        )
+
+    @classmethod
+    def _session_distractions(cls, session: Dict[str, Any]) -> float:
+        return max(
+            0.0,
+            cls._session_metric(
+                session,
+                "distraction_count_cleaned",
+                "distraction_count",
+                default=0.0,
+            ),
+        )
+
+    @classmethod
+    def _session_state_categories(cls, session: Dict[str, Any]) -> Dict[str, float]:
+        raw = session.get("state_seconds")
+        if not isinstance(raw, dict):
+            raw = session.get("state_seconds_raw")
+        if not isinstance(raw, dict):
+            raw = {}
+
+        def value(name: str) -> float:
+            try:
+                return max(0.0, float(raw.get(name, 0.0) or 0.0))
+            except (TypeError, ValueError):
+                return 0.0
+
+        focused = value("ON_SCREEN_READING") + value("OFFSCREEN_WRITING")
+        categories = {
+            "focused": focused,
+            "distraction": value("PHONE_DISTRACTION"),
+            "fatigue": value("DROWSY_FATIGUE"),
+            "away": value("AWAY"),
+            "uncertain": value("UNCERTAIN"),
+        }
+
+        state_total = sum(categories.values())
+        duration = cls._session_duration_seconds(session)
+        if state_total <= 0.0 and duration > 0.0:
+            focus_seconds = min(duration, cls._session_focus_seconds(session))
+            categories["focused"] = focus_seconds
+            categories["uncertain"] = max(0.0, duration - focus_seconds)
+        return categories
+
+    @classmethod
+    def _add_session_to_work_rhythm_accumulator(
+        cls,
+        acc: Dict[str, Any],
+        session: Dict[str, Any],
+    ) -> None:
+        duration = cls._session_duration_seconds(session)
+        focus_seconds = min(duration, cls._session_focus_seconds(session)) if duration > 0 else 0.0
+        score = cls._session_avg_score(session)
+        score_weight = max(1.0, duration)
+
+        acc["session_count"] = int(acc.get("session_count", 0) or 0) + 1
+        acc["total_seconds"] = float(acc.get("total_seconds", 0.0) or 0.0) + duration
+        acc["focus_seconds"] = float(acc.get("focus_seconds", 0.0) or 0.0) + focus_seconds
+        acc["score_weighted_sum"] = float(acc.get("score_weighted_sum", 0.0) or 0.0) + score * score_weight
+        acc["score_weight"] = float(acc.get("score_weight", 0.0) or 0.0) + score_weight
+        acc["distraction_count"] = float(acc.get("distraction_count", 0.0) or 0.0) + cls._session_distractions(session)
+        acc["break_count"] = float(acc.get("break_count", 0.0) or 0.0) + cls._session_metric(session, "break_count", default=0.0)
+        acc["live_session_included"] = bool(acc.get("live_session_included", False)) or bool(session.get("_is_live_session"))
+
+        state_totals = acc.setdefault("state_seconds", {})
+        for key, seconds in cls._session_state_categories(session).items():
+            state_totals[key] = float(state_totals.get(key, 0.0) or 0.0) + float(seconds or 0.0)
+
+        fatigue_onset = session.get("fatigue_onset_minutes")
+        try:
+            if fatigue_onset is not None and fatigue_onset != "":
+                fatigue_value = float(fatigue_onset)
+                if fatigue_value > 0:
+                    acc.setdefault("fatigue_onset_values", []).append(fatigue_value)
+        except (TypeError, ValueError):
+            pass
+
+    @staticmethod
+    def _finalize_work_rhythm_bucket(bucket: Dict[str, Any]) -> Dict[str, Any]:
+        total_seconds = float(bucket.get("total_seconds", 0.0) or 0.0)
+        focus_seconds = float(bucket.get("focus_seconds", 0.0) or 0.0)
+        score_weight = float(bucket.get("score_weight", 0.0) or 0.0)
+        avg_score = (
+            float(bucket.get("score_weighted_sum", 0.0) or 0.0) / score_weight
+            if score_weight > 0.0
+            else None
+        )
+        hours = max(total_seconds / 3600.0, 1e-6)
+        return {
+            "key": str(bucket.get("key", "") or ""),
+            "label": str(bucket.get("label", "") or ""),
+            "session_count": int(bucket.get("session_count", 0) or 0),
+            "total_minutes": round(total_seconds / 60.0, 2),
+            "focus_minutes": round(focus_seconds / 60.0, 2),
+            "focus_ratio": (focus_seconds / total_seconds) if total_seconds > 0.0 else 0.0,
+            "avg_score": avg_score,
+            "distractions_per_hour": (
+                float(bucket.get("distraction_count", 0.0) or 0.0) / hours
+                if total_seconds > 0.0
+                else 0.0
+            ),
+        }
+
+    @classmethod
+    def _finalize_work_rhythm_period(
+        cls,
+        totals: Dict[str, Any],
+        *,
+        label: str,
+        points: List[Dict[str, Any]],
+        sessions: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        total_seconds = float(totals.get("total_seconds", 0.0) or 0.0)
+        focus_seconds = float(totals.get("focus_seconds", 0.0) or 0.0)
+        session_count = int(totals.get("session_count", 0) or 0)
+        score_weight = float(totals.get("score_weight", 0.0) or 0.0)
+        avg_score = (
+            float(totals.get("score_weighted_sum", 0.0) or 0.0) / score_weight
+            if score_weight > 0.0
+            else 0.0
+        )
+        hours = max(total_seconds / 3600.0, 1e-6)
+        distraction_count = float(totals.get("distraction_count", 0.0) or 0.0)
+        break_count = float(totals.get("break_count", 0.0) or 0.0)
+        focus_ratio = focus_seconds / total_seconds if total_seconds > 0.0 else 0.0
+        state_seconds = dict(totals.get("state_seconds", {}) or {})
+        state_total = sum(float(v or 0.0) for v in state_seconds.values())
+        if state_total <= 0.0 and total_seconds > 0.0:
+            state_seconds = {
+                "focused": focus_seconds,
+                "distraction": 0.0,
+                "fatigue": 0.0,
+                "away": 0.0,
+                "uncertain": max(0.0, total_seconds - focus_seconds),
+            }
+            state_total = total_seconds
+
+        state_distribution = {}
+        for key in ("focused", "distraction", "fatigue", "away", "uncertain"):
+            seconds = float(state_seconds.get(key, 0.0) or 0.0)
+            state_distribution[key] = {
+                "seconds": round(seconds, 2),
+                "ratio": seconds / state_total if state_total > 0.0 else 0.0,
+            }
+
+        active_points = [point for point in points if point.get("session_count", 0) > 0]
+        best_point = None
+        if active_points:
+            best_point = max(
+                active_points,
+                key=lambda point: (
+                    float(point.get("avg_score") or 0.0),
+                    float(point.get("focus_minutes", 0.0) or 0.0),
+                ),
+            )
+
+        score_delta = cls._score_delta_for_sessions(sessions)
+        fatigue_values = list(totals.get("fatigue_onset_values", []) or [])
+        avg_fatigue_onset = statistics.fmean(fatigue_values) if fatigue_values else None
+        distraction_rate = distraction_count / hours if total_seconds > 0.0 else 0.0
+
+        insights = cls._build_work_rhythm_insights(
+            label=label,
+            session_count=session_count,
+            focus_ratio=focus_ratio,
+            avg_score=avg_score,
+            distraction_rate=distraction_rate,
+            state_distribution=state_distribution,
+            best_point=best_point,
+            score_delta=score_delta,
+            avg_fatigue_onset=avg_fatigue_onset,
+            live_session_included=bool(totals.get("live_session_included", False)),
+        )
+
+        return {
+            "label": label,
+            "session_count": session_count,
+            "total_seconds": round(total_seconds, 2),
+            "focus_seconds": round(focus_seconds, 2),
+            "focus_ratio": focus_ratio,
+            "avg_score": avg_score,
+            "distraction_count": int(round(distraction_count)),
+            "break_count": int(round(break_count)),
+            "distractions_per_hour": distraction_rate,
+            "avg_session_minutes": (total_seconds / 60.0 / session_count) if session_count else 0.0,
+            "avg_fatigue_onset_minutes": avg_fatigue_onset,
+            "score_delta": score_delta,
+            "best_bucket_label": str(best_point.get("label", "") if best_point else ""),
+            "live_session_included": bool(totals.get("live_session_included", False)),
+            "state_distribution": state_distribution,
+            "points": points,
+            "insights": insights,
+        }
+
+    @classmethod
+    def _score_delta_for_sessions(cls, sessions: List[Dict[str, Any]]) -> float:
+        scored: List[float] = []
+        for session in sorted(
+            sessions,
+            key=lambda item: cls._session_timestamp(item) or 0,
+        ):
+            score = cls._session_avg_score(session)
+            if score > 0.0:
+                scored.append(score)
+        if len(scored) < 2:
+            return 0.0
+        pivot = max(1, len(scored) // 2)
+        first = scored[:pivot]
+        second = scored[pivot:]
+        if not first or not second:
+            return 0.0
+        return float(statistics.fmean(second) - statistics.fmean(first))
+
+    @staticmethod
+    def _build_work_rhythm_insights(
+        *,
+        label: str,
+        session_count: int,
+        focus_ratio: float,
+        avg_score: float,
+        distraction_rate: float,
+        state_distribution: Dict[str, Dict[str, float]],
+        best_point: Optional[Dict[str, Any]],
+        score_delta: float,
+        avg_fatigue_onset: Optional[float],
+        live_session_included: bool,
+    ) -> List[str]:
+        if session_count <= 0:
+            return [f"{label} chưa có phiên đủ dữ liệu để tổng hợp."]
+
+        insights: List[str] = []
+        if focus_ratio >= 0.78 and avg_score >= 78:
+            insights.append("Nhịp làm việc đang ổn định: phần lớn thời gian là trạng thái hiệu quả.")
+        elif focus_ratio >= 0.62:
+            insights.append("Nhịp làm việc ở mức dùng được, nhưng vẫn còn khoảng dao động cần giảm.")
+        else:
+            insights.append("Thời gian hiệu quả còn thấp; nên chia phiên ngắn hơn và đặt mục tiêu nhỏ hơn.")
+
+        if distraction_rate >= 6.0:
+            insights.append("Mật độ lệch nhịp cao; nên giảm thông báo và chuẩn bị tài liệu trước khi bắt đầu.")
+        elif distraction_rate >= 3.0:
+            insights.append("Có một số lần lệch nhịp; nên nghỉ ngắn trước khi điểm sẵn sàng tụt sâu.")
+        else:
+            insights.append("Mật độ lệch nhịp thấp, đây là dấu hiệu tốt cho khả năng duy trì tác vụ.")
+
+        fatigue_ratio = float(state_distribution.get("fatigue", {}).get("ratio", 0.0) or 0.0)
+        if fatigue_ratio >= 0.14:
+            if avg_fatigue_onset:
+                insights.append(f"Dấu hiệu mệt xuất hiện đáng kể, thường bắt đầu quanh phút {avg_fatigue_onset:.0f}.")
+            else:
+                insights.append("Dấu hiệu mệt xuất hiện đáng kể; phiên sau nên nghỉ sớm hơn.")
+
+        if best_point and str(best_point.get("label", "") or ""):
+            insights.append(f"Khung tốt nhất trong kỳ này: {best_point['label']}.")
+
+        if score_delta >= 5.0:
+            insights.append("Điểm sẵn sàng đang tăng ở các phiên gần đây.")
+        elif score_delta <= -5.0:
+            insights.append("Điểm sẵn sàng đang giảm ở các phiên gần đây; nên giảm độ dài phiên kế tiếp.")
+
+        if live_session_included:
+            insights.append("Báo cáo đã cộng cả phiên đang chạy nên số liệu sẽ tiếp tục thay đổi.")
+
+        return insights[:5]
 
     @staticmethod
     def _compute_score_trend(valid_sessions: List[Dict[str, Any]]) -> float:

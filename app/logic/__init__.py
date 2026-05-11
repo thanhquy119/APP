@@ -29,7 +29,7 @@ from .task_context import (
 )
 from .auth import UserAccount, CurrentUserSession
 from .auth_manager import AuthManager, AuthResult
-from .user_store import GoogleSheetsUserStore
+from .supabase_user_store import SupabaseUserStore
 
 __all__ = [
     'FocusEngine',
@@ -57,5 +57,5 @@ __all__ = [
     'CurrentUserSession',
     'AuthManager',
     'AuthResult',
-    'GoogleSheetsUserStore',
+    'SupabaseUserStore',
 ]

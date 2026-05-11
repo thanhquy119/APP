@@ -323,6 +323,11 @@ class FocusEngine:
         self._last_intended_state: FocusState = FocusState.UNCERTAIN
         self._last_intended_confidence: float = 0.0
         self._last_vision_confidence: float = 1.0
+        self._last_face_detected: bool = False
+        self._last_face_tracking_confidence: float = 0.0
+        self._last_head_pose_confidence: float = 0.0
+        self._last_eye_confidence: float = 0.0
+        self._last_quality_warnings: tuple[str, ...] = ()
         self._last_uncertain_reason: str = "startup_warmup"
 
         # Focused-state hold and uncertainty diagnostics
@@ -342,12 +347,12 @@ class FocusEngine:
         self._break_recovery_boost_until: float = self._session_start
 
         # Smoothed evidence channels to avoid frame-level score jitter
-        self._smoothed_focus_stability: float = 0.78
+        self._smoothed_focus_stability: float = 0.58
         self._smoothed_distraction_severity: float = 0.0
         self._smoothed_drowsiness_severity: float = 0.0
         self._smoothed_uncertainty_severity: float = 0.0
         self._smoothed_time_drift: float = 0.0
-        self._smoothed_engagement_index: float = 0.78
+        self._smoothed_engagement_index: float = 0.58
         self._smoothed_confidence_index: float = 0.80
         self._last_behavior_summary: Dict[str, Any] = self._default_behavior_summary()
         self._working_fatigue_override_until: float = 0.0
@@ -564,6 +569,23 @@ class FocusEngine:
             self._last_vision_confidence = self._clamp01(features.vision_confidence)
         else:
             self._last_vision_confidence = 1.0
+        self._last_face_detected = bool(features.face_detected)
+        self._last_face_tracking_confidence = self._clamp01(
+            features.face_tracking_confidence
+            if features.face_tracking_confidence is not None
+            else (0.82 if features.face_detected else 0.0)
+        )
+        self._last_head_pose_confidence = self._clamp01(
+            features.head_pose_confidence
+            if features.head_pose_confidence is not None
+            else (0.72 if features.head_pitch is not None else 0.0)
+        )
+        self._last_eye_confidence = self._clamp01(
+            features.eye_confidence
+            if features.eye_confidence is not None
+            else (0.70 if features.ear_avg is not None else 0.0)
+        )
+        self._last_quality_warnings = tuple(str(item or "") for item in (features.quality_warnings or ()))
 
         # Update glance detection
         self._update_glance_detection(features)
@@ -771,6 +793,9 @@ class FocusEngine:
             + (0.18 * phone_free)
             + (0.14 * idle_support)
         )
+        offtask_visual_pressure = self._compute_offtask_visual_pressure(features, short_stats)
+        if offtask_visual_pressure > 0.0:
+            screen_evidence -= 0.26 * offtask_visual_pressure
 
         continuity = 0.0
         if self._current_state in (FocusState.ON_SCREEN_READING, FocusState.OFFSCREEN_WRITING):
@@ -784,7 +809,72 @@ class FocusEngine:
         evidence = max(screen_evidence, writing_evidence) + continuity
         if features.phone_present:
             evidence -= 0.22
+        if offtask_visual_pressure >= 0.55 and writing_evidence < 0.45:
+            evidence = min(evidence, 0.62 - 0.22 * self._clamp01(offtask_visual_pressure))
         return self._clamp01(evidence)
+
+    def _compute_offtask_visual_pressure(
+        self,
+        features: FrameFeatures,
+        short_stats: WindowStats,
+    ) -> float:
+        """Estimate visual evidence that the user is away from the screen/task.
+
+        This is intentionally conservative: it raises risk when posture/gaze is
+        off-screen and there is no desk-writing evidence, but it backs off when
+        writing cues are present.
+        """
+        cfg = self.config
+
+        current_pitch = features.head_pitch
+        if current_pitch is None:
+            pitch_signal = 0.0
+        else:
+            avg_pitch = float(short_stats.avg_pitch or current_pitch)
+            pitch_value = min(float(current_pitch), avg_pitch)
+            soft_down = cfg.head_down_pitch_threshold + 7.0
+            deep_down = cfg.head_down_pitch_threshold - 8.0
+            pitch_signal = self._clamp01((soft_down - pitch_value) / max(1.0, soft_down - deep_down))
+
+        yaw_signal = self._clamp01(
+            (abs(short_stats.avg_yaw) - (cfg.head_away_yaw_threshold * 0.72))
+            / max(8.0, cfg.head_away_yaw_threshold * 0.45)
+        )
+        eye_down_signal = self._clamp01(short_stats.eye_down_ratio / max(cfg.phone_eye_down_ratio_min, 1e-6))
+        eyes_unknown = features.eye_look_down is None and features.eye_look_up is None
+        unknown_gaze_signal = pitch_signal * (0.62 if eyes_unknown else 0.0)
+        no_face_signal = 1.0 - self._clamp01(short_stats.face_ratio / 0.72)
+
+        write_signal = self._clamp01(short_stats.avg_write_score / max(cfg.write_score_threshold, 1e-6))
+        desk_signal = self._clamp01(short_stats.hand_lower_ratio / 0.45)
+        writing_support = max(write_signal, desk_signal)
+        write_absence = 1.0 - self._clamp01(writing_support)
+
+        hand_phone_like = 0.0
+        if features.hand_present and features.hand_region == "upper":
+            hand_phone_like = 0.42
+        elif short_stats.hand_lower_ratio < 0.20 and short_stats.hand_present_ratio > 0.15:
+            hand_phone_like = 0.22
+
+        posture_pressure = max(
+            yaw_signal,
+            eye_down_signal,
+            unknown_gaze_signal,
+            pitch_signal * 0.82,
+            hand_phone_like,
+        )
+        # Face absence usually means "outside/uncertain", not "distracted".
+        # Keep a small contribution so confidence drops, but avoid presenting
+        # camera loss as strong distraction risk by itself.
+        pressure = max(posture_pressure, no_face_signal * 0.28)
+        pressure *= 0.62 + (0.38 * write_absence)
+
+        if writing_support >= 0.68:
+            pressure *= 0.35
+        elif writing_support >= 0.45:
+            pressure *= 0.55
+
+        return self._clamp01(pressure)
 
     def _compute_engagement_index(
         self,
@@ -815,6 +905,7 @@ class FocusEngine:
             else self._compute_confidence_index(features, state_confidence)
         )
         working = self._compute_working_evidence(features, short_stats, long_stats)
+        offtask_visual_pressure = self._compute_offtask_visual_pressure(features, short_stats)
         idle_penalty = self._clamp01((short_stats.avg_idle - self.config.passive_attention_idle_seconds) / 150.0) * 0.18
         engagement = (
             (0.42 * working)
@@ -822,9 +913,16 @@ class FocusEngine:
             + (0.14 * confidence_value)
             + (0.10 * (1.0 - distraction_value))
             - idle_penalty
+            - (0.18 * offtask_visual_pressure)
         )
         if state in (FocusState.ON_SCREEN_READING, FocusState.OFFSCREEN_WRITING):
             engagement += 0.04
+        if state == FocusState.PHONE_DISTRACTION:
+            engagement = min(engagement, 0.34)
+        elif state == FocusState.AWAY:
+            engagement = min(engagement, 0.18)
+        elif state == FocusState.UNCERTAIN and offtask_visual_pressure >= 0.45:
+            engagement = min(engagement, 0.54 - 0.14 * self._clamp01(offtask_visual_pressure))
         return self._clamp01(engagement)
 
     def _is_working_while_fatigued(
@@ -1241,17 +1339,28 @@ class FocusEngine:
                 and short_stats.avg_write_score < max(0.22, self.config.write_score_threshold - 0.12)
                 and short_stats.hand_lower_ratio < 0.35
             ):
+                eye_signal_known = features.eye_look_down is not None or features.eye_look_up is not None
                 eye_down_signal = (
                     features.eye_look_down is not None
                     and features.eye_look_down >= self.config.eye_look_down_threshold
                 )
-                if not eye_down_signal:
+                if eye_signal_known and not eye_down_signal:
                     return (
                         FocusState.ON_SCREEN_READING,
                         0.72,
                         (
                             "Mild downward neutral posture "
                             f"(pitch={features.head_pitch:.1f}deg, threshold={head_down_threshold:.1f}deg)"
+                        ),
+                    )
+                if not eye_signal_known:
+                    self._uncertain_reason_type = "behavioral_uncertainty"
+                    return (
+                        FocusState.UNCERTAIN,
+                        0.46,
+                        (
+                            "Mild downward posture but eye-gaze signal is unavailable; "
+                            "task involvement is not reliable enough"
                         ),
                     )
 
@@ -1328,6 +1437,24 @@ class FocusEngine:
                 head_yaw < yaw_threshold
                 and head_pitch >= head_down_threshold + 2.0
             ):
+                eye_signal_known = features.eye_look_down is not None or features.eye_look_up is not None
+                near_down_without_gaze = (
+                    head_pitch < head_down_threshold + 7.0
+                    and not eye_signal_known
+                    and short_stats.avg_write_score < max(0.24, self.config.write_score_threshold * 0.72)
+                    and short_stats.hand_lower_ratio < 0.30
+                )
+                if near_down_without_gaze:
+                    return self._resolve_uncertain_state(
+                        features,
+                        short_stats,
+                        long_stats,
+                        base_confidence=0.46,
+                        base_reason=(
+                            "Screen gaze is unclear in a downward posture; "
+                            "need eye signal or writing evidence"
+                        ),
+                    )
                 return (FocusState.ON_SCREEN_READING, 0.85,
                         f"Looking at screen (yaw={head_yaw:.0f}deg)")
 
@@ -1479,6 +1606,14 @@ class FocusEngine:
         strong_negative = self._has_strong_negative_uncertainty_evidence(features, short_stats, now)
         continuous_down = self._get_continuous_head_down_seconds(now)
         low_write_context = short_stats.avg_write_score < max(0.24, self.config.write_score_threshold * 0.72)
+        eye_signal_known = features.eye_look_down is not None or features.eye_look_up is not None
+        near_down_without_gaze = (
+            features.head_pitch is not None
+            and features.head_pitch < (self.config.head_down_pitch_threshold + 7.0)
+            and not eye_signal_known
+            and low_write_context
+            and short_stats.hand_lower_ratio < 0.30
+        )
         suspicious_head_down = (
             features.head_pitch is not None
             and features.head_pitch < (self.config.head_down_pitch_threshold - 4.0)
@@ -1497,6 +1632,7 @@ class FocusEngine:
             and short_stats.phone_ratio < 0.22
             and short_stats.eye_closure_ratio < (self.config.drowsy_closure_ratio + 0.05)
             and short_stats.perclos_ratio < (self.config.perclos_threshold + 0.05)
+            and not near_down_without_gaze
             and not suspicious_head_down
             and not strong_negative
         )
@@ -1816,9 +1952,6 @@ class FocusEngine:
         # If eye-down is sustained enough to satisfy the phone criterion,
         # phone branch should handle it instead of fatigue.
         if self._get_continuous_eye_down_seconds(features.timestamp) >= self.config.phone_eye_down_min_duration:
-            return None
-
-        if self._is_working_while_fatigued(features, short_stats, long_stats, drowsy_score=0.45):
             return None
 
         return (
@@ -2161,10 +2294,22 @@ class FocusEngine:
         )
         upper_hand_signal = (
             1.0 if (features.hand_present and features.hand_region == "upper")
-            else self._clamp01((0.35 - short_stats.hand_lower_ratio) / 0.35)
+            else (
+                self._clamp01((0.35 - short_stats.hand_lower_ratio) / 0.35)
+                if short_stats.hand_present_ratio > 0.15
+                else 0.0
+            )
         )
         long_phone_signal = self._clamp01(long_stats.phone_ratio / 0.3)
         confidence_signal = self._clamp01((state_confidence - 0.25) / 0.65)
+        offtask_visual_pressure = self._compute_offtask_visual_pressure(features, short_stats)
+        no_face_signal = 1.0 - self._clamp01(short_stats.face_ratio / 0.72)
+        explicit_distraction_signal = max(
+            phone_signal,
+            long_phone_signal,
+            min(head_signal, eye_down_signal),
+            0.55 * upper_hand_signal,
+        )
 
         context_gate = max(phone_signal, head_signal, eye_down_signal, long_phone_signal)
         aux_scale = self._clamp01((context_gate - 0.1) / 0.9)
@@ -2178,10 +2323,38 @@ class FocusEngine:
             + (0.05 * glance_absence_signal * aux_scale)
             + (0.03 * upper_hand_signal * aux_scale)
             + (0.06 * confidence_signal * aux_scale)
+            + (0.18 * offtask_visual_pressure)
         )
 
         if phone_signal > 0.8 and head_signal > 0.6 and write_absence_signal > 0.6:
             severity += 0.15
+
+        if (
+            offtask_visual_pressure >= 0.55
+            and write_absence_signal >= 0.55
+            and explicit_distraction_signal >= 0.35
+        ):
+            severity = max(severity, 0.34 + 0.32 * offtask_visual_pressure)
+        elif (
+            offtask_visual_pressure >= 0.32
+            and write_absence_signal >= 0.50
+            and explicit_distraction_signal >= 0.35
+        ):
+            severity = max(severity, 0.16 + 0.34 * offtask_visual_pressure)
+        elif offtask_visual_pressure >= 0.32 and write_absence_signal >= 0.50:
+            severity = max(severity, 0.10 + 0.18 * offtask_visual_pressure)
+
+        if (
+            no_face_signal >= 0.72
+            and phone_signal < 0.20
+            and long_phone_signal < 0.20
+            and head_signal < 0.35
+            and eye_down_signal < 0.35
+        ):
+            severity = min(severity, 0.22)
+
+        if explicit_distraction_signal < 0.35 and not features.phone_present:
+            severity = min(severity, 0.30)
 
         if short_stats.blink_rate_per_min >= cfg.blink_rate_high_fatigue_min:
             severity -= 0.08
@@ -2536,7 +2709,9 @@ class FocusEngine:
 
         target = base_target
         target -= uncertainty * 12.0
-        target -= distraction * 6.0
+        target -= distraction * 14.0
+        if self._uncertain_reason_type == "behavioral_uncertainty" and distraction >= 0.42:
+            target -= 10.0 * self._clamp01((distraction - 0.42) / 0.45)
         target -= drowsiness * 7.0
         target -= time_drift * 0.6
 
@@ -2544,6 +2719,8 @@ class FocusEngine:
             target += 2.0
 
         low_bound = 60.0 if recent_focused_context else 55.0
+        if self._uncertain_reason_type == "behavioral_uncertainty" and distraction >= 0.42:
+            low_bound = 46.0
         return max(low_bound, min(90.0, target))
 
     def _update_focus_score(
@@ -2706,6 +2883,14 @@ class FocusEngine:
                     cfg.score_uncertain_soft_penalty
                     + self._smoothed_uncertainty_severity * cfg.score_drop_rate_distraction_soft * 0.4
                 ) * dt
+                if self._uncertain_reason_type == "behavioral_uncertainty":
+                    max_up *= 0.55
+                    max_down += (
+                        self._smoothed_distraction_severity
+                        * cfg.score_drop_rate_distraction_soft
+                        * 0.55
+                        * dt
+                    )
 
         elif state == FocusState.PHONE_DISTRACTION:
             strong = self._smoothed_distraction_severity >= 0.72
@@ -2866,7 +3051,60 @@ class FocusEngine:
             "fatigue_index": self._smoothed_drowsiness_severity,
             "distraction_risk": self._smoothed_distraction_severity,
             "confidence_index": self._smoothed_confidence_index,
+            "confidence_explanation": self.get_confidence_explanation(),
             "behavior_summary": dict(self._last_behavior_summary),
+        }
+
+    def get_confidence_explanation(self) -> Dict[str, Any]:
+        """Explain camera/model reliability without overclaiming user intent."""
+        confidence_index = self._clamp01(self._smoothed_confidence_index)
+        if confidence_index >= 0.70:
+            level = "good"
+        elif confidence_index >= 0.45:
+            level = "medium"
+        else:
+            level = "low"
+
+        reasons: List[str] = []
+        suggestions: List[str] = []
+
+        def add(reason: str, suggestion: str = "") -> None:
+            if reason and reason not in reasons:
+                reasons.append(reason)
+            if suggestion and suggestion not in suggestions:
+                suggestions.append(suggestion)
+
+        warnings = [str(item or "").strip().lower() for item in self._last_quality_warnings]
+
+        if not self._last_face_detected or any("no_face" in item or "no face" in item for item in warnings):
+            add("Người dùng đang ngoài khung camera.", "Đưa khuôn mặt vào khung hình ổn định hơn.")
+
+        if any("low_light" in item or "dark" in item or "low light" in item for item in warnings):
+            add("Ánh sáng yếu.", "Tăng ánh sáng phía trước mặt.")
+
+        if any("blur" in item or "mờ" in item for item in warnings):
+            add("Hình ảnh hơi mờ.", "Lau camera hoặc giữ thiết bị ổn định hơn.")
+
+        if self._last_vision_confidence < 0.45:
+            add("Dữ liệu camera chưa đủ tin cậy.", "Kiểm tra ánh sáng và vị trí camera.")
+
+        if self._last_face_tracking_confidence < 0.45:
+            add("Không thấy mặt ổn định.", "Giữ camera ngang mặt hoặc giảm vật che khuôn mặt.")
+
+        if self._last_eye_confidence < 0.42:
+            add("Tín hiệu mắt chưa rõ.", "Điều chỉnh góc camera để mắt hiển thị rõ hơn.")
+
+        if self._last_head_pose_confidence < 0.38:
+            add("Tín hiệu tư thế đầu chưa rõ.", "Giữ đầu trong vùng camera sáng và ít rung.")
+
+        if not reasons and level != "good":
+            add("Tín hiệu quan sát chưa ổn định.", "Tiếp tục thu thêm dữ liệu trong vài giây.")
+
+        return {
+            "confidence_level": level,
+            "confidence_index": float(confidence_index),
+            "reasons": reasons[:3],
+            "suggestions": suggestions[:3],
         }
 
     def get_score_breakdown(self) -> Dict[str, float]:
@@ -2906,6 +3144,11 @@ class FocusEngine:
         self._last_intended_state = FocusState.UNCERTAIN
         self._last_intended_confidence = 0.0
         self._last_vision_confidence = 1.0
+        self._last_face_detected = False
+        self._last_face_tracking_confidence = 0.0
+        self._last_head_pose_confidence = 0.0
+        self._last_eye_confidence = 0.0
+        self._last_quality_warnings = ()
         self._needs_refocus_validation = False
         self._refocus_candidate_since = None
         self._refocus_validated_since = None
@@ -2921,12 +3164,12 @@ class FocusEngine:
         self._last_significant_break_time = self._session_start
         self._last_time_tracking_timestamp = self._session_start
         self._break_recovery_boost_until = self._session_start
-        self._smoothed_focus_stability = 0.78
+        self._smoothed_focus_stability = 0.58
         self._smoothed_distraction_severity = 0.0
         self._smoothed_drowsiness_severity = 0.0
         self._smoothed_uncertainty_severity = 0.0
         self._smoothed_time_drift = 0.0
-        self._smoothed_engagement_index = 0.78
+        self._smoothed_engagement_index = 0.58
         self._smoothed_confidence_index = 0.80
         self._last_behavior_summary = self._default_behavior_summary()
         self._working_fatigue_override_until = 0.0
@@ -2956,6 +3199,10 @@ def create_frame_features(
     phone_confidence: Optional[float] = None,
     vision_confidence: Optional[float] = None,
     hand_writing_confidence: Optional[float] = None,
+    head_pose_confidence: Optional[float] = None,
+    eye_confidence: Optional[float] = None,
+    face_tracking_confidence: Optional[float] = None,
+    quality_warnings: tuple = (),
 ) -> FrameFeatures:
     """Create FrameFeatures with defaults."""
     return FrameFeatures(
@@ -2979,4 +3226,8 @@ def create_frame_features(
         phone_confidence=phone_confidence,
         vision_confidence=vision_confidence,
         hand_writing_confidence=hand_writing_confidence,
+        head_pose_confidence=head_pose_confidence,
+        eye_confidence=eye_confidence,
+        face_tracking_confidence=face_tracking_confidence,
+        quality_warnings=quality_warnings,
     )

@@ -30,7 +30,7 @@ import cv2
 import numpy as np
 
 from ..logic.focus_engine import FocusState, FocusEngine, FrameFeatures
-from ..logic.google_sheets_sync import PROFILE_SCOPED_CONFIG_KEYS, PROFILE_SCOPED_DEFAULT_SETTINGS
+from ..logic.cloud_payloads import PROFILE_SCOPED_CONFIG_KEYS, PROFILE_SCOPED_DEFAULT_SETTINGS
 from ..logic.session_analytics import SessionAnalyticsStore
 from ..logic.scientific_validation import ValidationDataStore
 from ..logic.zalo_alerts import ZaloAlertManager
@@ -73,21 +73,21 @@ STATE_COLORS = {
 }
 
 STATE_NAMES = {
-    FocusState.ON_SCREEN_READING: "Tín hiệu làm việc đang ổn định",
-    FocusState.OFFSCREEN_WRITING: "Tín hiệu ghi chép đang ổn định",
+    FocusState.ON_SCREEN_READING: "Tín hiệu làm việc ổn định",
+    FocusState.OFFSCREEN_WRITING: "Làm việc ổn định",
     FocusState.PHONE_DISTRACTION: "Lệch khỏi nhiệm vụ",
-    FocusState.DROWSY_FATIGUE: "Mệt mỏi / Buồn ngủ",
-    FocusState.AWAY: "Không có mặt",
+    FocusState.DROWSY_FATIGUE: "Có dấu hiệu mệt",
+    FocusState.AWAY: "Ngoài khung camera",
     FocusState.UNCERTAIN: "Chưa đủ tin cậy",
 }
 
 # OpenCV text rendering does not support Vietnamese diacritics reliably.
 OVERLAY_STATE_NAMES = {
     FocusState.ON_SCREEN_READING: "Tin hieu lam viec on dinh",
-    FocusState.OFFSCREEN_WRITING: "Tin hieu ghi chep on dinh",
+    FocusState.OFFSCREEN_WRITING: "Lam viec on dinh",
     FocusState.PHONE_DISTRACTION: "Lech khoi nhiem vu",
-    FocusState.DROWSY_FATIGUE: "Met moi / Buon ngu",
-    FocusState.AWAY: "Khong co mat",
+    FocusState.DROWSY_FATIGUE: "Co dau hieu met",
+    FocusState.AWAY: "Ngoai khung camera",
     FocusState.UNCERTAIN: "Chua du tin cay",
 }
 
@@ -458,7 +458,7 @@ class CameraWidget(QFrame):
 
 
 class LiveStatusStrip(QFrame):
-    """Compact strip for stream and model runtime statuses."""
+    """Compact strip for camera runtime statuses."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -467,7 +467,6 @@ class LiveStatusStrip(QFrame):
         self._last_stream = "Disconnected"
         self._last_face = "No face"
         self._last_lighting = "Unknown"
-        self._last_model = "Initializing"
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
@@ -477,7 +476,6 @@ class LiveStatusStrip(QFrame):
         self._add_chip(layout, "stream", "Luồng", "Disconnected")
         self._add_chip(layout, "face", "Khuôn mặt", "No face")
         self._add_chip(layout, "lighting", "Ánh sáng", "Unknown")
-        self._add_chip(layout, "model", "Mô hình", "Initializing")
 
     def _add_chip(self, parent_layout: QHBoxLayout, key: str, caption: str, initial_value: str) -> None:
         chip = QFrame()
@@ -497,17 +495,15 @@ class LiveStatusStrip(QFrame):
         parent_layout.addWidget(chip, 1)
         self.values[key] = val
 
-    def set_status(self, stream: str, face: str, lighting: str, model: str) -> None:
+    def set_status(self, stream: str, face: str, lighting: str) -> None:
         """Refresh runtime statuses shown in the strip."""
         self._last_stream = stream
         self._last_face = face
         self._last_lighting = lighting
-        self._last_model = model
 
         self.values["stream"].setText(stream)
         self.values["face"].setText(face)
         self.values["lighting"].setText(lighting)
-        self.values["model"].setText(model)
 
         stream_lower = stream.lower()
         if stream_lower == "live":
@@ -528,15 +524,6 @@ class LiveStatusStrip(QFrame):
             lighting_color = "#d8e6f7" if self.is_dark else "#1f3a55"
         self.values["lighting"].setStyleSheet(f"color: {lighting_color}; font-weight: 700;")
 
-        model_lower = model.lower()
-        if any(token in model_lower for token in ("ready", "san sang", "sẵn sàng")):
-            model_color = "#7ef4d4" if self.is_dark else "#0f7c68"
-        elif any(token in model_lower for token in ("calib", "hieu chinh", "hiệu chỉnh", "unstable", "chua", "chưa")):
-            model_color = "#efbd78" if self.is_dark else "#9a641e"
-        else:
-            model_color = "#d8e6f7" if self.is_dark else "#1f3a55"
-        self.values["model"].setStyleSheet(f"color: {model_color}; font-weight: 700;")
-
     def update_theme(self, is_dark: bool) -> None:
         """Apply theme-aware text accents for the status strip."""
         self.is_dark = bool(is_dark)
@@ -544,7 +531,6 @@ class LiveStatusStrip(QFrame):
             stream=self._last_stream,
             face=self._last_face,
             lighting=self._last_lighting,
-            model=self._last_model,
         )
 
 class FocusScoreWidget(QFrame):
@@ -1150,7 +1136,7 @@ class TrendInsightWidget(QFrame):
         elif safe_percent < 45 and "phục hồi" in trend_text.lower():
             note = "Nhịp làm việc đang đi lên. Đây là thời điểm tốt để xử lý tác vụ quan trọng."
         else:
-            note = "Theo dõi xu hướng để nghỉ đúng nhịp, giữ hiệu quả ổn định suốt phiên làm việc."
+            note = "Theo dõi xu hướng để nghỉ đúng nhịp, giữ nhịp làm việc ổn định suốt phiên."
 
         self.insight_note.setText(note)
         self._note_fade.stop()
@@ -1169,10 +1155,14 @@ class TrendInsightWidget(QFrame):
 class StatsWidget(QFrame):
     """Compact work-session metrics designed for calm-tech UI."""
 
+    clicked = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("statsCard")
         self.setProperty("summaryCard", True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("Tổng nhịp làm việc trong hôm nay, gồm các phiên đã lưu và phiên đang chạy")
 
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(12)
@@ -1188,7 +1178,7 @@ class StatsWidget(QFrame):
         title.setObjectName("sectionTitle")
         root.addWidget(title)
 
-        subtitle = QLabel("Các chỉ số chính cập nhật theo phiên hiện tại")
+        subtitle = QLabel("Cộng dồn trong ngày, gồm phiên đang chạy")
         subtitle.setObjectName("metricRowLabel")
         subtitle.setWordWrap(True)
         root.addWidget(subtitle)
@@ -1199,8 +1189,8 @@ class StatsWidget(QFrame):
 
         self.labels = {}
         stats = [
-            ("session_time", "Thời gian phiên", "00:00:00", "◷"),
-            ("focus_time", "Thời gian làm việc hiệu quả", "00:00:00", "◎"),
+            ("session_time", "Thời gian hôm nay", "00:00:00", "◷"),
+            ("focus_time", "Thời gian làm việc ổn định", "00:00:00", "◎"),
             ("distraction_count", "Số lần lệch nhịp", "0", "!"),
             ("break_count", "Số lần nghỉ", "0", "◌"),
             ("avg_score", "Mức sẵn sàng TB", "0", "◉"),
@@ -1245,6 +1235,8 @@ class StatsWidget(QFrame):
                 rows.addWidget(divider)
 
         root.addLayout(rows)
+        for child in self.findChildren(QWidget):
+            child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
     def apply_theme(self, is_dark: bool):
         """Kept for backward compatibility with legacy calls."""
@@ -1255,6 +1247,13 @@ class StatsWidget(QFrame):
         for key, value in stats.items():
             if key in self.labels:
                 self.labels[key].setText(str(value))
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
 
 FOCUS_AIRPORT_VISUALS: Dict[str, Dict[str, Any]] = {
@@ -1976,15 +1975,17 @@ class MainWindow(QMainWindow):
     break_suggested = pyqtSignal()
     config_changed = pyqtSignal(dict)
     logout_requested = pyqtSignal()
+    context_alert_requested = pyqtSignal(str, str)
 
     def __init__(self, config: Optional[dict] = None, auth_manager: Optional[AuthManager] = None):
         super().__init__()
         self.config = config or {}
-        self.config.setdefault("theme_mode", "light")
+        self.config.setdefault("theme_mode", "dark")
         self.config.setdefault("enable_focus_audio", False)
         self.config.setdefault("focus_audio_track", "rain_light")
         self.config.setdefault("focus_audio_volume", 30)
-        self.config.setdefault("vision_target_fps", 10)
+        self.config.setdefault("vision_target_fps", 8)
+        self.config.setdefault("camera_preview_fps", 12)
         self.config.setdefault("enable_performance_logging", False)
         self.config.setdefault("enable_journey_pip", True)
         self.config.setdefault("enable_validation_logging", True)
@@ -1997,13 +1998,13 @@ class MainWindow(QMainWindow):
         self.auth_manager.configure(self.config)
 
         # Session analytics and personalization
-        self.analytics_store = SessionAnalyticsStore(google_config=self.config)
+        self.analytics_store = SessionAnalyticsStore(cloud_config=self.config)
         self.validation_store = ValidationDataStore()
         self.zalo_alert_manager = ZaloAlertManager(self.config)
         self.focus_audio_manager = FocusAudioManager(config=self.config, parent=self)
         self.profile_name = self._get_profile_name()
         self._reset_profile_scoped_settings_to_defaults()
-        self._load_profile_scoped_settings_from_google(seed_if_missing=True)
+        self._load_profile_scoped_settings_from_supabase(seed_if_missing=True)
         self.session_started_at: Optional[float] = None
         self.state_time_by_state: Dict[str, float] = {
             state.name: 0.0 for state in FocusState
@@ -2036,6 +2037,9 @@ class MainWindow(QMainWindow):
         self._vision_skipped_frames = 0
         self._last_perf_log_at = 0.0
         self._last_validation_prediction_at = 0.0
+        self._last_boarding_preview_at = 0.0
+        self._context_alert_last_signature = ""
+        self._context_alert_last_at = 0.0
 
         # Initialize components
         self._init_vision()
@@ -2065,12 +2069,14 @@ class MainWindow(QMainWindow):
         self._session_goal: str = ""
         self._session_planned_minutes: int = 0
         self._session_route_payload: Dict[str, Any] = {}
+        self._session_journey_enabled: bool = False
         self._journey_phase_end: str = "Boarding"
         self._journey_completion_ratio: float = 0.0
         self._journey_map_dialog: Optional[QDialog] = None
         self._journey_map_dialog_route_key = ()
         self._journey_pip_window: Optional[FocusJourneyPiPWindow] = None
         self._journey_pip_hidden_for_session: bool = False
+        self._journey_pip_closed_until_restore: bool = False
         self._journey_pip_progress_key = ()
         self._journey_waiting_for_boarding: bool = False
         self._journey_calibration_reset_done: bool = True
@@ -2104,6 +2110,7 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             app.installEventFilter(self)
+        QTimer.singleShot(0, self._refresh_today_stats_card)
 
     def _init_vision(self):
         """Initialize vision components using MediaPipe Tasks API."""
@@ -2118,7 +2125,7 @@ class MainWindow(QMainWindow):
 
             camera_id = int(self.config.get("camera_id", 0))
             width, height = self._parse_resolution(self.config.get("resolution", "640x480"))
-            fps = int(self.config.get("fps", 30))
+            fps = int(self.config.get("fps", 15))
             camera_config = CameraConfig(
                 camera_index=camera_id,
                 width=width,
@@ -2134,7 +2141,7 @@ class MainWindow(QMainWindow):
             phone_enabled = bool(self.config.get("enable_phone_detection", True))
             phone_mode = str(self.config.get("phone_detection_mode", "heuristic"))
             phone_conf_threshold = float(self.config.get("phone_confidence_threshold", 0.55))
-            phone_interval_frames = max(1, int(self.config.get("phone_detection_interval_frames", 3) or 3))
+            phone_interval_frames = max(1, int(self.config.get("phone_detection_interval_frames", 4) or 4))
             phone_confirm_window_seconds = max(
                 0.8,
                 float(self.config.get("phone_confirmation_window_seconds", 2.5) or 2.5),
@@ -2566,6 +2573,11 @@ class MainWindow(QMainWindow):
         score_container = QFrame()
         score_container.setObjectName("scoreCard")
         score_container.setProperty("summaryCard", True)
+        score_container.setToolTip(
+            "Mức sẵn sàng làm việc là chỉ số 0-100 từ tín hiệu hiện tại: "
+            "hành vi theo nhiệm vụ, mệt mỏi, rủi ro phân tâm và độ tin cậy camera. "
+            "98 nghĩa là tín hiệu đang rất ổn định, không phải kết luận tuyệt đối."
+        )
         score_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         score_shadow = QGraphicsDropShadowEffect(score_container)
         score_shadow.setBlurRadius(12)
@@ -2582,6 +2594,7 @@ class MainWindow(QMainWindow):
 
         score_title = QLabel("Mức sẵn sàng làm việc")
         score_title.setObjectName("sectionTitle")
+        score_title.setToolTip(score_container.toolTip())
         score_header.addWidget(score_title, 1)
 
         self.state_badge = QLabel("Chưa đủ tin cậy")
@@ -2590,18 +2603,8 @@ class MainWindow(QMainWindow):
         score_header.addWidget(self.state_badge, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         score_layout.addLayout(score_header)
 
-        self.state_hint = QLabel("")
-        self.state_hint.setObjectName("mutedLabel")
-        self.state_hint.setWordWrap(True)
-        self.state_hint.hide()
-        self._state_hint_opacity = QGraphicsOpacityEffect(self.state_hint)
-        self._state_hint_opacity.setOpacity(0.0)
-        self.state_hint.setGraphicsEffect(self._state_hint_opacity)
-        self._state_hint_fade = QVariantAnimation(self)
-        self._state_hint_fade.setDuration(0)
-        self._state_hint_fade.valueChanged.connect(self._fade_state_hint)
-
         self.score_widget = FocusScoreWidget()
+        self.score_widget.setToolTip(score_container.toolTip())
         score_layout.addWidget(self.score_widget, 0, Qt.AlignmentFlag.AlignCenter)
 
         self.score_breakdown_panel = self._create_score_breakdown_panel()
@@ -2614,6 +2617,7 @@ class MainWindow(QMainWindow):
         right_panel.addWidget(self.route_map_widget)
         self.route_map_widget.update_route({}, 0.0, 0, "Boarding", "ready")
         self.route_map_widget.clicked.connect(self._open_journey_map_dialog)
+        self.route_map_widget.hide()
 
         self.journey_widget = JourneyProgressWidget()
         self.journey_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -2623,6 +2627,7 @@ class MainWindow(QMainWindow):
         # Session statistics card
         self.stats_widget = StatsWidget()
         self.stats_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.stats_widget.clicked.connect(self._open_work_rhythm_report)
         right_panel.addWidget(self.stats_widget)
 
         # Task context card — hidden from UI; monitoring continues in background
@@ -2668,7 +2673,7 @@ class MainWindow(QMainWindow):
         self.score_breakdown_bars: Dict[str, QProgressBar] = {}
 
         rows = [
-            ("engagement", "Liên quan nhiệm vụ", "0%"),
+            ("engagement", "Dấu hiệu theo nhiệm vụ", "0%"),
             ("fatigue", "Mệt mỏi", "0%"),
             ("distraction", "Rủi ro phân tâm", "0%"),
         ]
@@ -2728,6 +2733,48 @@ class MainWindow(QMainWindow):
         if not breakdown:
             breakdown = {"engagement": 0.0, "fatigue": 0.0, "distraction": 0.0}
 
+        try:
+            digital_risk = float(getattr(getattr(self, "task_context_stats", None), "risk_score", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            digital_risk = 0.0
+        visual_risk = max(0.0, min(1.0, float(breakdown.get("distraction", 0.0) or 0.0)))
+        digital_risk = max(0.0, min(1.0, digital_risk))
+
+        state = getattr(self, "display_state", getattr(self, "current_state", FocusState.UNCERTAIN))
+        score = float(getattr(self, "current_score", 100.0) or 100.0)
+        task_stats = getattr(self, "task_context_stats", None)
+        current_context = str(getattr(task_stats, "current_category", "") or "").strip().lower()
+        task_alignment = max(0.0, min(1.0, float(getattr(task_stats, "task_alignment_ratio", 0.0) or 0.0)))
+        strong_digital_context = digital_risk >= 0.45
+        explicit_visual_distraction = state == FocusState.PHONE_DISTRACTION
+        task_context_active = current_context == "task_related"
+
+        visible_engagement = max(0.0, min(1.0, float(breakdown.get("engagement", 0.0) or 0.0)))
+        if task_context_active and not strong_digital_context:
+            visible_engagement = max(visible_engagement, 0.70 + 0.12 * task_alignment)
+        elif (
+            score >= 85.0
+            and not strong_digital_context
+            and state in (FocusState.ON_SCREEN_READING, FocusState.OFFSCREEN_WRITING)
+        ):
+            visible_engagement = max(visible_engagement, 0.62)
+        breakdown["engagement"] = visible_engagement
+
+        # Keep the visible risk channel interpretable: uncertain camera/posture
+        # lowers task-evidence, but should not look like strong distraction
+        # unless phone/context evidence is actually present.
+        if not strong_digital_context and not explicit_visual_distraction:
+            if task_context_active:
+                visual_risk = min(visual_risk, 0.12)
+            elif score >= 88.0:
+                visual_risk = min(visual_risk, 0.14)
+            elif state in (FocusState.ON_SCREEN_READING, FocusState.OFFSCREEN_WRITING):
+                visual_risk = min(visual_risk, 0.18)
+            elif state in (FocusState.UNCERTAIN, FocusState.AWAY):
+                visual_risk = min(visual_risk, 0.22)
+
+        breakdown["distraction"] = max(visual_risk, digital_risk)
+
         for key, value in breakdown.items():
             label = self.score_breakdown_labels.get(key)
             if label is None:
@@ -2786,7 +2833,7 @@ class MainWindow(QMainWindow):
         return card
 
     def _apply_theme(self):
-        theme_mode = str(self.config.get("theme_mode", "light")).strip().lower()
+        theme_mode = str(self.config.get("theme_mode", "dark")).strip().lower()
         is_dark = theme_mode != "light"
         self.setStyleSheet(get_stylesheet(is_dark))
         if hasattr(self, "title_bar"):
@@ -2805,8 +2852,8 @@ class MainWindow(QMainWindow):
         self.stats_widget.apply_theme(is_dark)
         if hasattr(self, "trend_widget") and hasattr(self.trend_widget, "sparkline"):
             self.trend_widget.sparkline.update_theme(is_dark)
-        if hasattr(self, "state_badge") and hasattr(self, "state_hint"):
-            self._update_state_badge(self.current_state, 0.0, self.state_hint.text())
+        if hasattr(self, "state_badge"):
+            self._update_state_badge(self.current_state, 0.0, "")
         if hasattr(self, "guidance_widget"):
             self._refresh_focus_guidance()
         self._sync_title_bar_state()
@@ -2828,10 +2875,20 @@ class MainWindow(QMainWindow):
 
     def _init_timers(self):
         """Initialize update timers."""
-        # Frame processing timer (30 FPS)
+        # Keep preview smoother than vision processing without forcing 30 FPS on weaker CPUs.
         self.frame_timer = QTimer()
         self.frame_timer.timeout.connect(self._process_frame)
-        self.frame_interval = 33  # ~30 FPS
+        try:
+            preview_fps = float(self.config.get("camera_preview_fps", 0) or 0)
+        except (TypeError, ValueError):
+            preview_fps = 0.0
+        if preview_fps <= 0.0:
+            try:
+                target_fps = float(self.config.get("vision_target_fps", 8) or 8)
+            except (TypeError, ValueError):
+                target_fps = 8.0
+            preview_fps = max(6.0, min(16.0, target_fps * 1.5))
+        self.frame_interval = int(round(1000.0 / max(6.0, min(18.0, preview_fps))))
 
         # Stats update timer (1 second)
         self.stats_timer = QTimer()
@@ -2910,20 +2967,20 @@ class MainWindow(QMainWindow):
         self._save_local_profile_settings_cache(cache)
 
     def _reset_profile_scoped_settings_to_defaults(self) -> None:
-        if not bool(self.config.get("enable_google_sheets_sync", False)):
+        if not bool(self.config.get("enable_supabase_sync", False)):
             return
 
         for key in PROFILE_SCOPED_CONFIG_KEYS:
             if key in PROFILE_SCOPED_DEFAULT_SETTINGS:
                 self.config[key] = PROFILE_SCOPED_DEFAULT_SETTINGS[key]
 
-    def _load_profile_scoped_settings_from_google(self, *, seed_if_missing: bool = False) -> None:
+    def _load_profile_scoped_settings_from_supabase(self, *, seed_if_missing: bool = False) -> None:
         profile_name = str(self.profile_name or self._get_profile_name()).strip() or "default"
-        if not bool(self.config.get("enable_google_sheets_sync", False)):
+        if not bool(self.config.get("enable_supabase_sync", False)):
             self._load_profile_scoped_settings_from_local_cache(profile_name)
             return
 
-        loaded = self.analytics_store.google_sync.load_profile_settings(profile_name)
+        loaded = self.analytics_store.supabase_sync.load_profile_settings(profile_name)
         if loaded is None:
             self._load_profile_scoped_settings_from_local_cache(profile_name)
             return
@@ -2932,7 +2989,7 @@ class MainWindow(QMainWindow):
             self.config.update(loaded)
             self._save_profile_scoped_settings_to_local_cache(profile_name)
             logger.info(
-                "Loaded %s profile-scoped settings from Google Sheets for profile '%s'",
+                "Loaded %s profile-scoped settings from Supabase for profile '%s'",
                 len(loaded),
                 profile_name,
             )
@@ -2940,12 +2997,12 @@ class MainWindow(QMainWindow):
 
         if seed_if_missing:
             payload = self._profile_scoped_settings_payload()
-            seeded = self.analytics_store.google_sync.upsert_profile_settings(profile_name, payload)
+            seeded = self.analytics_store.supabase_sync.upsert_profile_settings(profile_name, payload)
             if seeded:
-                logger.info("Seeded profile-scoped settings to Google Sheets for profile '%s'", profile_name)
+                logger.info("Seeded profile-scoped settings to Supabase for profile '%s'", profile_name)
 
-    def _sync_profile_scoped_settings_to_google(self) -> None:
-        if not bool(self.config.get("enable_google_sheets_sync", False)):
+    def _sync_profile_scoped_settings_to_supabase(self) -> None:
+        if not bool(self.config.get("enable_supabase_sync", False)):
             self._save_profile_scoped_settings_to_local_cache(self.profile_name or self._get_profile_name())
             return
 
@@ -2953,10 +3010,10 @@ class MainWindow(QMainWindow):
         self.config["profile_name"] = profile_name
         payload = self._profile_scoped_settings_payload()
         self._save_profile_scoped_settings_to_local_cache(profile_name)
-        synced = self.analytics_store.google_sync.upsert_profile_settings(profile_name, payload)
+        synced = self.analytics_store.supabase_sync.upsert_profile_settings(profile_name, payload)
         if not synced:
             logger.debug(
-                "Skipped syncing profile-scoped settings for profile '%s' (Google Sheets unavailable)",
+                "Skipped syncing profile-scoped settings for profile '%s' (Supabase unavailable)",
                 profile_name,
             )
 
@@ -3007,6 +3064,7 @@ class MainWindow(QMainWindow):
         self._session_context_payload = {}
         self._session_exit_payload = {}
         self._session_route_payload = {}
+        self._session_journey_enabled = False
         self._journey_phase_end = "Boarding"
         self._journey_completion_ratio = 0.0
         self._journey_waiting_for_boarding = False
@@ -3024,6 +3082,9 @@ class MainWindow(QMainWindow):
         self._vision_effective_frames = 0
         self._vision_skipped_frames = 0
         self._last_perf_log_at = 0.0
+        self._last_boarding_preview_at = 0.0
+        self._context_alert_last_signature = ""
+        self._context_alert_last_at = 0.0
         try:
             self.task_context_classifier.update_from_app_config(self.config)
             self.task_context_classifier.clear_samples()
@@ -3415,9 +3476,110 @@ class MainWindow(QMainWindow):
             sample = self.task_context_classifier.annotate(sample)
             self.task_context_stats = self.task_context_classifier.compute_stats(now=now)
             self._update_task_context_card(sample, self.task_context_stats)
+            self._update_score_breakdown()
+            self._maybe_show_context_alert(sample, self.task_context_stats)
             self._maybe_show_context_checkin(sample, self.task_context_stats)
         except Exception as exc:
             logger.debug("Task context sampling failed: %s", exc)
+
+    @staticmethod
+    def _context_csv_tokens(value: Any, fallback: Any = "") -> tuple[str, ...]:
+        tokens = TaskContextClassifier._normalize_tokens(value)
+        if tokens:
+            return tokens
+        return TaskContextClassifier._normalize_tokens(fallback)
+
+    def _context_alert_match_reason(self, sample) -> str:
+        default_keywords = PROFILE_SCOPED_DEFAULT_SETTINGS.get("task_context_distracting_keywords", "")
+        default_apps = PROFILE_SCOPED_DEFAULT_SETTINGS.get("task_context_distracting_apps", "")
+        keywords = self._context_csv_tokens(
+            self.config.get("task_context_distracting_keywords", default_keywords),
+            default_keywords,
+        )
+        apps = self._context_csv_tokens(
+            self.config.get("task_context_distracting_apps", default_apps),
+            default_apps,
+        )
+
+        process_name = str(getattr(sample, "process_name", "") or "").strip().lower()
+        app_id = str(getattr(sample, "app_id", "") or "").strip().lower()
+        title = str(getattr(sample, "window_title", "") or "").strip().lower()
+        context_text = str(getattr(sample, "context_text", "") or "").strip().lower()
+        app_text = f"{process_name} {app_id}".strip()
+        title_text = f"{title} {context_text}".strip()
+
+        for app_rule in apps:
+            token = str(app_rule or "").strip().lower()
+            if token and (token == process_name or token == app_id or token in app_text):
+                return f"app:{token}"
+
+        for keyword in keywords:
+            token = str(keyword or "").strip().lower()
+            if token and (token in title_text or token in app_text):
+                return f"keyword:{token}"
+
+        return ""
+
+    def _maybe_show_context_alert(self, sample, stats: TaskContextStats) -> None:
+        """Notify only when the active app/tab looks likely to pull attention away."""
+        if not bool(getattr(self, "camera_running", False)):
+            return
+        if bool(getattr(self, "_session_paused", False)) or bool(getattr(self, "_break_dialog_open", False)):
+            return
+        if not bool(self.config.get("task_context_alert_enabled", True)):
+            return
+
+        category = str(getattr(sample, "category", "unknown") or "unknown").strip().lower()
+        if category != "distracting":
+            return
+
+        try:
+            risk = float(getattr(stats, "risk_score", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            risk = 0.0
+        try:
+            threshold = float(self.config.get("task_context_alert_threshold", 0.68) or 0.68)
+        except (TypeError, ValueError):
+            threshold = 0.68
+        if risk < max(0.2, min(0.98, threshold)):
+            return
+
+        match_reason = self._context_alert_match_reason(sample)
+        if not match_reason:
+            return
+
+        now = time.time()
+        try:
+            cooldown = float(self.config.get("task_context_alert_cooldown_seconds", 120) or 120)
+        except (TypeError, ValueError):
+            cooldown = 120.0
+        cooldown = max(30.0, min(900.0, cooldown))
+
+        signature = f"{str(getattr(sample, 'app_id', '') or '')}|{match_reason}"
+        if signature == self._context_alert_last_signature and now - self._context_alert_last_at < cooldown:
+            return
+
+        self._context_alert_last_signature = signature
+        self._context_alert_last_at = now
+
+        payload = {
+            "timestamp": int(now),
+            "checkin_type": "context_alert",
+            "active_app": str(getattr(sample, "process_name", "") or ""),
+            "active_category": category,
+            "alert_reason": match_reason,
+            "action": "notification_only",
+            "task_alignment_ratio": float(getattr(stats, "task_alignment_ratio", 0.0) or 0.0),
+            "digital_distraction_risk": float(getattr(stats, "risk_score", 0.0) or 0.0),
+            "focus_score": float(getattr(self, "current_score", 0.0) or 0.0),
+        }
+        self._session_checkins.append(payload)
+
+        app_name = payload["active_app"] or "ứng dụng hiện tại"
+        title = "Nhắc nhẹ Deep Focus" if bool(getattr(self, "_deep_focus_active", False)) else "Nhắc nhẹ nhịp làm việc"
+        message = f"{app_name} có dấu hiệu dễ kéo bạn khỏi nhiệm vụ. Quay lại việc chính nhé."
+        self.context_alert_requested.emit(title, message)
+        logger.info("Task context alert: app=%s reason=%s risk=%.2f", app_name, match_reason, risk)
 
     @staticmethod
     def _category_label(category: str) -> str:
@@ -3467,6 +3629,8 @@ class MainWindow(QMainWindow):
         if bool(getattr(self, "_break_dialog_open", False)):
             return
         if bool(getattr(self, "_deep_focus_active", False)):
+            return
+        if bool(self.config.get("task_context_alert_enabled", True)):
             return
         if not bool(self.config.get("task_context_checkin_enabled", True)):
             return
@@ -3644,6 +3808,8 @@ class MainWindow(QMainWindow):
 
     def _update_focus_journey_origin_after_session(self, session_seconds: int) -> None:
         """Advance the next journey origin only after the current flight reaches destination."""
+        if not bool(getattr(self, "_session_journey_enabled", False)):
+            return
         payload = dict(getattr(self, "_session_context_payload", {}) or {})
         payload.update(dict(getattr(self, "_session_route_payload", {}) or {}))
         to_code = str(payload.get("route_to_code", "") or "").strip().upper()
@@ -3678,8 +3844,9 @@ class MainWindow(QMainWindow):
         if self.session_started_at is None:
             return
 
+        now = time.time()
         session_seconds = max(
-            int(time.time() - self.session_started_at),
+            int(now - self.session_started_at - self._effective_paused_total_seconds(now)),
             int(self.session_time_seconds),
         )
         self.session_started_at = None
@@ -3841,6 +4008,7 @@ class MainWindow(QMainWindow):
         self.config["break_interval_minutes"] = int(recommendation.get("work_minutes", 25))
         self.config["break_duration_minutes"] = int(recommendation.get("break_minutes", 5))
         self._update_focus_journey_origin_after_session(session_seconds)
+        self._refresh_today_stats_card()
         self.config_changed.emit(self.config.copy())
 
         logger.info(
@@ -3898,19 +4066,26 @@ class MainWindow(QMainWindow):
                         )
 
                     # Show boarding pass — user confirms before tracking starts
-                    boarding = SessionBoardingPassDialog(
-                        context_payload=self._session_context_payload,
-                        config=self.config,
-                        parent=self,
-                    )
-                    if boarding.exec() != QDialog.DialogCode.Accepted:
-                        self.btn_start.setChecked(False)
-                        return
-
                     self._session_mode = session_mode
                     self._session_goal = str(self._session_context_payload.get("goal", "") or "")
                     self._session_planned_minutes = int(self._session_context_payload.get("planned_minutes", 0) or 0)
-                    self._session_route_payload = dict(self._session_context_payload or {})
+                    self._session_journey_enabled = bool(self._session_context_payload.get("journey_enabled", False))
+                    if self._session_journey_enabled:
+                        boarding = SessionBoardingPassDialog(
+                            context_payload=self._session_context_payload,
+                            config=self.config,
+                            parent=None,
+                        )
+                        QTimer.singleShot(0, self.hide)
+                        if boarding.exec() != QDialog.DialogCode.Accepted:
+                            self.showNormal()
+                            self.raise_()
+                            self.activateWindow()
+                            self.btn_start.setChecked(False)
+                            return
+                        self._session_route_payload = dict(self._session_context_payload or {})
+                    else:
+                        self._session_route_payload = {}
                     self.config["session_mode"] = self._session_mode
                 else:
                     self._session_context_payload = {
@@ -3927,6 +4102,7 @@ class MainWindow(QMainWindow):
                     self._session_goal = ""
                     self._session_planned_minutes = 0
                     self._session_route_payload = {}
+                    self._session_journey_enabled = False
 
             if not self.camera.start():
                 NoticeDialog.warning(
@@ -3935,6 +4111,10 @@ class MainWindow(QMainWindow):
                     "Không thể khởi động camera. Vui lòng kiểm tra kết nối.",
                     config=self.config,
                 )
+                if bool(getattr(self, "_session_journey_enabled", False)):
+                    self.showNormal()
+                    self.raise_()
+                    self.activateWindow()
                 self.btn_start.setChecked(False)
                 return
 
@@ -3944,17 +4124,20 @@ class MainWindow(QMainWindow):
             pending_session_mode = str(self._session_mode or "normal")
             pending_session_goal = str(self._session_goal or "")
             pending_planned_minutes = int(self._session_planned_minutes or 0)
+            pending_journey_enabled = bool(self._session_journey_enabled)
             self._reset_session_tracking()
             self._session_context_payload = pending_context_payload
             self._session_route_payload = pending_route_payload
             self._session_mode = pending_session_mode
             self._session_goal = pending_session_goal
             self._session_planned_minutes = pending_planned_minutes
+            self._session_journey_enabled = pending_journey_enabled
             self._break_snapshots = []
             self._before_break_snapshot = {}
             self._journey_pip_hidden_for_session = False
+            self._journey_pip_closed_until_restore = False
             self._journey_pip_progress_key = ()
-            self._journey_waiting_for_boarding = True
+            self._journey_waiting_for_boarding = self._session_journey_enabled
             self._journey_calibration_reset_done = True
             self._journey_session_id = int(time.time())
             self._validation_session_id = f"{self.profile_name}:{self._journey_session_id}"
@@ -3983,13 +4166,20 @@ class MainWindow(QMainWindow):
             self._update_state_badge(FocusState.UNCERTAIN, 0.0, "Đang theo dõi phiên làm việc...")
             self._update_live_status(face_detected=None, lighting="Calibrating")
             self._refresh_focus_guidance()
-            self._update_journey_widget()
-            QTimer.singleShot(650, self._open_journey_map_dialog)
+            if self._session_journey_enabled:
+                self._update_journey_widget()
+                QTimer.singleShot(650, self._open_journey_map_dialog)
+            else:
+                self._begin_journey_measurement_after_boarding()
 
             logger.info("Focus tracking started (mode=%s)", self._session_mode)
 
         except Exception as e:
             logger.error(f"Failed to start tracking: {e}")
+            if bool(getattr(self, "_session_journey_enabled", False)):
+                self.showNormal()
+                self.raise_()
+                self.activateWindow()
             NoticeDialog.error(
                 self,
                 "Lỗi",
@@ -4002,6 +4192,8 @@ class MainWindow(QMainWindow):
     def _stop_tracking(self):
         """Stop camera and focus tracking."""
         was_running = self.camera_running
+        if bool(getattr(self, "_session_paused", False)) and float(getattr(self, "_pause_started_at", 0.0) or 0.0) > 0.0:
+            self._paused_total_seconds += max(0.0, time.time() - float(self._pause_started_at))
         self._session_paused = False
         self._pause_started_at = 0.0
         self.frame_timer.stop()
@@ -4024,7 +4216,7 @@ class MainWindow(QMainWindow):
         # Deactivate deep focus / journey UI
         self._apply_deep_focus_ui(False)
         if hasattr(self, "route_map_widget"):
-            self.route_map_widget.show()
+            self.route_map_widget.setVisible(bool(getattr(self, "_session_journey_enabled", False)))
             self.route_map_widget.update_route(self._session_route_payload, 0.0, 0, "Boarding", "ready")
         self._refresh_journey_map_dialog()
         if hasattr(self, "journey_widget"):
@@ -4102,12 +4294,18 @@ class MainWindow(QMainWindow):
             return
 
         timestamp = time.time()
+        if bool(getattr(self, "_journey_waiting_for_boarding", False)):
+            if timestamp - float(getattr(self, "_last_boarding_preview_at", 0.0) or 0.0) >= 0.125:
+                self._last_boarding_preview_at = timestamp
+                self.camera_widget.update_frame(frame)
+            return
+
         timestamp_ms = int(timestamp * 1000)
         try:
-            target_fps = float(self.config.get("vision_target_fps", 10) or 10)
+            target_fps = float(self.config.get("vision_target_fps", 8) or 8)
         except (TypeError, ValueError):
-            target_fps = 10.0
-        target_fps = max(4.0, min(15.0, target_fps))
+            target_fps = 8.0
+        target_fps = max(4.0, min(12.0, target_fps))
         target_interval = 1.0 / target_fps
 
         if (
@@ -4314,7 +4512,7 @@ class MainWindow(QMainWindow):
             self._vision_processing_ema_ms,
             self._vision_effective_frames,
             self._vision_skipped_frames,
-            self.config.get("vision_target_fps", 10),
+            self.config.get("vision_target_fps", 8),
         )
 
     def _draw_overlays(self, frame: np.ndarray,
@@ -4408,7 +4606,7 @@ class MainWindow(QMainWindow):
         score_now = float(self.current_score)
         summary = getattr(self, "_last_behavior_summary", {}) or {}
         status_modifier = str(summary.get("status_modifier", "") or "")
-        is_dark = str(self.config.get("theme_mode", "light")).strip().lower() != "light"
+        is_dark = str(self.config.get("theme_mode", "dark")).strip().lower() != "light"
 
         if is_dark:
             palette = {
@@ -4471,20 +4669,40 @@ class MainWindow(QMainWindow):
             chip_text = "Camera chưa rõ"
             chip_bg, chip_fg, chip_border = palette["watch"]
             hint_text = "Dữ liệu camera chưa đủ tin cậy. Điều chỉnh ánh sáng hoặc góc camera trước khi kết luận."
-        elif self._is_distraction_state(state) or score_now < 58:
-            chip_text = "Cần nghỉ"
+        elif state == FocusState.PHONE_DISTRACTION:
+            chip_text = "Lệch khỏi nhiệm vụ"
             chip_bg, chip_fg, chip_border = palette["break"]
-            hint_text = "Dấu hiệu quá tải chú ý. Nên nghỉ ngắn 2-3 phút để hồi phục."
+            hint_text = "Hệ thống ghi nhận dấu hiệu có thể lệch khỏi tác vụ."
+        elif state == FocusState.DROWSY_FATIGUE:
+            chip_text = "Có dấu hiệu mệt"
+            chip_bg, chip_fg, chip_border = palette["watch"]
+            hint_text = "Có thể cân nhắc nghỉ mắt ngắn hoặc tạm nghỉ phục hồi."
+        elif state == FocusState.UNCERTAIN:
+            chip_text = "Chưa đủ tin cậy"
+            chip_bg, chip_fg, chip_border = palette["watch"]
+            hint_text = "Cần thêm dữ liệu hoặc điều chỉnh ánh sáng/góc camera."
+        elif score_now < 58:
+            chip_text = "Có dấu hiệu mệt"
+            chip_bg, chip_fg, chip_border = palette["break"]
+            hint_text = "Có thể cân nhắc nghỉ mắt ngắn hoặc tạm nghỉ phục hồi."
         elif trend_delta <= -3.5 or score_now < 76:
             chip_text = "Lệch nhịp nhẹ"
             chip_bg, chip_fg, chip_border = palette["watch"]
             delta_points = max(1, int(abs(trend_delta)))
             hint_text = f"Giảm {delta_points} điểm so với xu hướng gần nhất."
+        elif state == FocusState.ON_SCREEN_READING:
+            chip_text = "Tín hiệu làm việc ổn định"
+            chip_bg, chip_fg, chip_border = palette["good"]
+            hint_text = "Dựa trên tín hiệu hành vi hiện tại, chưa thấy dấu hiệu rõ của mệt mỏi hoặc lệch nhiệm vụ."
+        elif state == FocusState.OFFSCREEN_WRITING:
+            chip_text = "Làm việc ổn định"
+            chip_bg, chip_fg, chip_border = palette["good"]
+            hint_text = "Dựa trên tín hiệu hành vi hiện tại, hoạt động ghi chép/làm việc ngoài màn hình đang ổn định."
         else:
-            chip_text = "Ổn định"
+            chip_text = "Làm việc ổn định"
             chip_bg, chip_fg, chip_border = palette["good"]
             stable_minutes = max(1, int(self.continuous_focus_time // 60))
-            hint_text = f"Ổn định trong {stable_minutes} phút gần đây."
+            hint_text = f"Tín hiệu ổn định trong {stable_minutes} phút gần đây."
 
         self.state_badge.setText(chip_text)
         self.state_badge.setStyleSheet(
@@ -4494,23 +4712,6 @@ class MainWindow(QMainWindow):
 
         state_name = STATE_NAMES.get(state, state.name)
         self.state_badge.setToolTip(hint_text or reason or state_name)
-        self.state_hint.setText("")
-        self.state_hint.setToolTip(reason or state_name)
-        if self.state_hint.isVisible() and hasattr(self, "_state_hint_fade"):
-            self._state_hint_fade.stop()
-            self._state_hint_fade.setStartValue(0.65)
-            self._state_hint_fade.setEndValue(1.0)
-            self._state_hint_fade.start()
-
-    def _fade_state_hint(self, value) -> None:
-        """Subtle fade for score insight text transitions."""
-        if not hasattr(self, "_state_hint_opacity"):
-            return
-        try:
-            opacity = max(0.0, min(1.0, float(value)))
-        except (TypeError, ValueError):
-            opacity = 1.0
-        self._state_hint_opacity.setOpacity(opacity)
 
     def _append_session_state_segment(
         self,
@@ -4858,27 +5059,6 @@ class MainWindow(QMainWindow):
             return "Ánh sáng tốt"
         return "Chưa rõ"
 
-    @staticmethod
-    def _format_model_status(quality_summary: Optional[str], model_ready: bool) -> str:
-        """Map camera quality/calibration warnings to the model chip."""
-        if not model_ready:
-            return "Giới hạn"
-
-        summary = str(quality_summary or "").strip()
-        normalized = summary.lower()
-        if not summary:
-            return "Sẵn sàng"
-
-        if any(token in normalized for token in ("chua hieu chinh", "chưa hiệu chỉnh", "calibrat")):
-            return "Cần hiệu chỉnh"
-        if any(token in normalized for token in ("tracking", "khong on dinh", "không ổn định")):
-            return "Tracking chưa ổn"
-        if any(token in normalized for token in ("mat bi lech", "mặt bị lệch")):
-            return "Căn khung nhẹ"
-        if any(token in normalized for token in ("khung hinh mo", "khung hình mờ")):
-            return "Khung hình mờ"
-        return "Sẵn sàng"
-
     def _update_live_status(
         self,
         face_detected: Optional[bool],
@@ -4903,14 +5083,11 @@ class MainWindow(QMainWindow):
         else:
             face_status = "Waiting"
 
-        model_ready = self.vision_available and self.vision_pipeline is not None
-        model_status = self._format_model_status(quality_summary, model_ready)
         lighting_text = self._format_lighting_status(lighting)
         self.live_status_strip.set_status(
             stream=stream_status,
             face=face_status,
             lighting=lighting_text,
-            model=model_status,
         )
 
     def _can_trigger_distraction_break(self) -> bool:
@@ -4996,7 +5173,7 @@ class MainWindow(QMainWindow):
 
         # In deep focus mode, guidance widget is hidden — only update trend widget
         deep_focus = bool(getattr(self, "_deep_focus_active", False))
-        is_dark = str(self.config.get("theme_mode", "light")).strip().lower() != "light"
+        is_dark = str(self.config.get("theme_mode", "dark")).strip().lower() != "light"
 
         if self.camera_running and self._is_initial_analysis_phase():
             seconds_left = self._analysis_seconds_left()
@@ -5045,6 +5222,18 @@ class MainWindow(QMainWindow):
             mode = "good"
             decision = "Đang chờ tín hiệu"
             detail = "Chưa có dữ liệu để đánh giá dựa trên tín hiệu hành vi hiện tại. Nhấn Bắt đầu để hệ thống quan sát nhịp làm việc."
+        elif self.current_state == FocusState.UNCERTAIN or guidance_modifier == "low_confidence":
+            mode = "watch"
+            decision = "Chưa đủ tin cậy"
+            detail = "Cần thêm dữ liệu hoặc điều chỉnh ánh sáng/góc camera."
+        elif self.current_state == FocusState.PHONE_DISTRACTION:
+            mode = "break"
+            decision = "Lệch khỏi nhiệm vụ"
+            detail = "Hệ thống ghi nhận dấu hiệu có thể lệch khỏi tác vụ."
+        elif self.current_state == FocusState.DROWSY_FATIGUE:
+            mode = "watch"
+            decision = "Có dấu hiệu mệt"
+            detail = "Có thể cân nhắc nghỉ mắt ngắn hoặc tạm nghỉ phục hồi."
         elif guidance_modifier == "fatigued_but_working":
             mode = "watch"
             decision = "Đang làm việc nhưng có dấu hiệu mệt"
@@ -5053,14 +5242,6 @@ class MainWindow(QMainWindow):
             mode = "watch"
             decision = "Có thể đang đọc thụ động"
             detail = "Dựa trên tín hiệu hành vi hiện tại, mức chủ động chưa rõ. Hãy đặt một mục tiêu nhỏ trong 5 phút để biến việc nhìn màn hình thành hành động rõ ràng hơn."
-        elif guidance_modifier == "low_confidence":
-            mode = "watch"
-            decision = "Chưa đủ tin cậy"
-            detail = "Dựa trên tín hiệu hành vi hiện tại, camera chưa đủ chắc. Điều chỉnh ánh sáng hoặc góc camera để hệ thống đánh giá thận trọng hơn."
-        elif self._is_distraction_state(self.current_state):
-            mode = "break"
-            decision = "Nên nghỉ ngắn 2-3 phút"
-            detail = "Dựa trên tín hiệu hành vi hiện tại, có dấu hiệu lệch khỏi nhiệm vụ. Nghỉ một nhịp ngắn để quay lại trạng thái làm việc ổn định hơn."
         elif cycle_percent >= 100 or (trend_delta <= -8 and score_now < 70):
             mode = "break"
             decision = "Nên nghỉ ngắn 2-3 phút"
@@ -5071,8 +5252,8 @@ class MainWindow(QMainWindow):
             detail = "Dựa trên tín hiệu hành vi hiện tại, mức sẵn sàng làm việc có dấu hiệu giảm. Có thể hoàn tất phần đang làm rồi nghỉ ngắn."
         else:
             mode = "good"
-            decision = "Tín hiệu làm việc đang ổn định"
-            detail = "Dựa trên tín hiệu hành vi hiện tại, chưa thấy dấu hiệu rõ của mệt mỏi hoặc lệch nhiệm vụ. Hãy giữ nhịp làm việc hiện tại."
+            decision = "Tín hiệu làm việc ổn định"
+            detail = "Dựa trên tín hiệu hành vi hiện tại, chưa thấy dấu hiệu rõ của mệt mỏi hoặc lệch nhiệm vụ."
 
         # In deep focus mode: only show guidance widget when risk is high
         if deep_focus:
@@ -5128,31 +5309,42 @@ class MainWindow(QMainWindow):
             self.continuous_focus_time = 0
             self.last_break_time = time.time()
 
-    @pyqtSlot()
-    def _update_stats(self):
-        """Update statistics display."""
-        if self.camera_running:
-            if getattr(self, "_session_paused", False):
-                return
-            if bool(getattr(self, "_journey_waiting_for_boarding", False)):
-                self.session_time_seconds = 0
-            elif self.session_started_at is not None:
-                self.session_time_seconds = max(
-                    0,
-                    int(time.time() - self.session_started_at - float(getattr(self, "_paused_total_seconds", 0.0) or 0.0)),
-                )
-            else:
-                self.session_time_seconds = 0
-            if self.session_time_seconds > 0 or not self._is_initial_analysis_phase():
-                self._record_focus_sample(self.current_score)
+    def _effective_paused_total_seconds(self, now: Optional[float] = None) -> float:
+        """Return persisted pause time plus the currently active pause, if any."""
+        current = time.time() if now is None else float(now)
+        paused_total = max(0.0, float(getattr(self, "_paused_total_seconds", 0.0) or 0.0))
+        pause_started = float(getattr(self, "_pause_started_at", 0.0) or 0.0)
+        if bool(getattr(self, "_session_paused", False)) and pause_started > 0.0:
+            paused_total += max(0.0, current - pause_started)
+        return paused_total
+
+    def _today_stats_payload(self, live_session: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+        """Build the main stats card from today's saved sessions plus live data."""
+        try:
+            summary = self.analytics_store.build_work_rhythm_summary(
+                self.profile_name,
+                live_session=live_session,
+            )
+            day = dict((summary.get("periods", {}) or {}).get("day", {}) or {})
+            total_seconds = float(day.get("total_seconds", 0.0) or 0.0)
+            focus_seconds = float(day.get("focus_seconds", 0.0) or 0.0)
+            avg_score = float(day.get("avg_score", 0.0) or 0.0)
+            return {
+                "session_time": self._format_time(total_seconds),
+                "focus_time": self._format_time(focus_seconds),
+                "distraction_count": str(int(day.get("distraction_count", 0) or 0)),
+                "break_count": str(int(day.get("break_count", 0) or 0)),
+                "avg_score": f"{avg_score:.0f}" if total_seconds > 0 else "0",
+            }
+        except Exception as exc:
+            logger.debug("Failed to build today's stats card: %s", exc)
 
         avg_score_text = "0"
         if self.score_samples:
             avg_score_text = f"{sum(self.score_samples) / len(self.score_samples):.0f}"
         elif self.camera_running and self._is_initial_analysis_phase():
             avg_score_text = "100"
-
-        stats = {
+        return {
             "session_time": self._format_time(self.session_time_seconds),
             "focus_time": self._format_time(self.focus_time),
             "distraction_count": str(self.distraction_count),
@@ -5160,9 +5352,125 @@ class MainWindow(QMainWindow):
             "avg_score": avg_score_text,
         }
 
-        self.stats_widget.update_stats(stats)
+    def _refresh_today_stats_card(self) -> None:
+        if not hasattr(self, "stats_widget"):
+            return
+        self.stats_widget.update_stats(
+            self._today_stats_payload(self._current_work_rhythm_live_session())
+        )
+
+    @pyqtSlot()
+    def _update_stats(self):
+        """Update statistics display."""
+        if self.camera_running:
+            now = time.time()
+            if bool(getattr(self, "_journey_waiting_for_boarding", False)):
+                self.session_time_seconds = 0
+            elif self.session_started_at is not None:
+                self.session_time_seconds = max(
+                    0,
+                    int(now - self.session_started_at - self._effective_paused_total_seconds(now)),
+                )
+            else:
+                self.session_time_seconds = 0
+            if (
+                not getattr(self, "_session_paused", False)
+                and (self.session_time_seconds > 0 or not self._is_initial_analysis_phase())
+            ):
+                self._record_focus_sample(self.current_score)
+
+        self._refresh_today_stats_card()
         self._refresh_focus_guidance()
         self._update_journey_widget()
+
+    def _current_work_rhythm_live_session(self) -> Optional[Dict[str, Any]]:
+        """Return a lightweight unsaved session snapshot for the results dialog."""
+        if not bool(getattr(self, "camera_running", False)):
+            return None
+
+        if self.session_started_at is not None and not bool(getattr(self, "_journey_waiting_for_boarding", False)):
+            now = time.time()
+            session_seconds = max(
+                0,
+                int(now - self.session_started_at - self._effective_paused_total_seconds(now)),
+            )
+        else:
+            session_seconds = int(getattr(self, "session_time_seconds", 0) or 0)
+
+        if session_seconds <= 0:
+            return None
+
+        raw_samples = list(getattr(self, "raw_score_samples", []) or [])
+        display_samples = list(getattr(self, "score_samples", []) or [])
+        if raw_samples:
+            avg_score = float(sum(raw_samples) / len(raw_samples))
+        elif display_samples:
+            avg_score = float(sum(display_samples) / len(display_samples))
+        else:
+            avg_score = float(getattr(self, "current_score", 0.0) or 0.0)
+
+        fatigue_onset = None
+        if getattr(self, "_session_fatigue_onset_seconds", None) is not None:
+            fatigue_onset = float(self._session_fatigue_onset_seconds) / 60.0
+
+        return {
+            "timestamp": int(time.time()),
+            "profile_name": self.profile_name,
+            "session_seconds": int(session_seconds),
+            "session_seconds_cleaned": int(session_seconds),
+            "focus_seconds": float(getattr(self, "raw_focus_time", getattr(self, "focus_time", 0.0)) or 0.0),
+            "focus_seconds_cleaned": float(getattr(self, "raw_focus_time", getattr(self, "focus_time", 0.0)) or 0.0),
+            "distraction_count": int(getattr(self, "distraction_count", 0) or 0),
+            "distraction_count_cleaned": float(getattr(self, "distraction_count", 0) or 0),
+            "break_count": int(getattr(self, "break_count", 0) or 0),
+            "avg_score": avg_score,
+            "avg_score_cleaned": avg_score,
+            "fatigue_onset_minutes": fatigue_onset,
+            "state_seconds": dict(getattr(self, "raw_state_time_by_state", {}) or {}),
+            "state_seconds_display": dict(getattr(self, "state_time_by_state", {}) or {}),
+        }
+
+    @pyqtSlot()
+    def _open_work_rhythm_report(self) -> None:
+        """Open day/week/month work-rhythm results from the statistics card."""
+        try:
+            from .work_rhythm_dialog import WorkRhythmReportDialog
+
+            summary = self.analytics_store.build_work_rhythm_summary(
+                self.profile_name,
+                live_session=self._current_work_rhythm_live_session(),
+            )
+
+            if not hasattr(self, "_work_rhythm_dialog") or self._work_rhythm_dialog is None:
+                self._work_rhythm_dialog = WorkRhythmReportDialog(
+                    summary=summary,
+                    config=self.config,
+                    parent=None,
+                )
+                self._work_rhythm_dialog.dismissed.connect(self._handle_work_rhythm_dismissed)
+
+            # Hide main window when showing the dialog
+            self.hide()
+            self._work_rhythm_dialog.show()
+            self._work_rhythm_dialog.raise_()
+            self._work_rhythm_dialog.activateWindow()
+
+        except Exception as exc:
+            logger.exception("Failed to open work rhythm report: %s", exc)
+            NoticeDialog.warning(
+                self,
+                "Nhịp làm việc",
+                "Chưa thể mở báo cáo nhịp làm việc lúc này.",
+                config=self.config,
+            )
+
+    @pyqtSlot()
+    def _handle_work_rhythm_dismissed(self) -> None:
+        """Called when the work rhythm report is closed."""
+        self._work_rhythm_dialog = None
+        self.show()
+        self.raise_()
+        self.activateWindow()
 
     def _format_time(self, seconds: float) -> str:
         """Format seconds as HH:MM:SS."""
@@ -5196,29 +5504,44 @@ class MainWindow(QMainWindow):
         )
 
         self.break_count += 1
-        self.last_break_time = time.time()
         self.continuous_focus_time = 0
         self.zalo_alert_manager.mark_recovered()
 
         should_resume = bool(self.config.get("auto_resume_after_break", True))
         was_tracking = self.camera_running
+        break_pause_started = 0.0
 
         if was_tracking:
-            self.btn_start.setChecked(False)
-            self._stop_tracking()
+            break_pause_started = time.time()
+            self._session_paused = True
+            self._pause_started_at = break_pause_started
+            self.frame_timer.stop()
+            self.stats_timer.stop()
+            if hasattr(self, "task_context_timer"):
+                self.task_context_timer.stop()
+            if self.camera is not None:
+                self.camera.stop()
+            self._update_state_badge(self.display_state, float(self.current_score), "Đang nghỉ ngắn. Phiên sẽ tiếp tục sau khi quay lại.")
+            self._update_journey_pip_data(force=True)
+            self._sync_journey_pip_visibility()
 
         self._break_dialog_open = True
         game_result: dict = {}
-        try:
-            if not auto_triggered:
-                overlay_seconds = int(self.config.get("break_overlay_seconds", 12))
-                break_overlay = BreakModeDialog(duration_seconds=overlay_seconds, parent=self)
-                break_overlay.exec()
 
+        if not auto_triggered:
+            overlay_seconds = int(self.config.get("break_overlay_seconds", 12))
+            break_overlay = BreakModeDialog(duration_seconds=overlay_seconds, parent=self)
+            break_overlay.exec()
+
+        self.hide()
+        try:
             # Open the focused recovery workflow and capture attention probe result
             game_result = self._open_games_with_result()
         finally:
             self._break_dialog_open = False
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
 
         # Record break snapshot with game result for recovery validation
         if self._before_break_snapshot:
@@ -5230,8 +5553,44 @@ class MainWindow(QMainWindow):
             self._schedule_break_recovery_validation(snap)
 
         if was_tracking and should_resume:
+            paused_from = float(getattr(self, "_pause_started_at", 0.0) or break_pause_started or time.time())
+            self._paused_total_seconds += max(0.0, time.time() - paused_from)
+            self._pause_started_at = 0.0
+            self._session_paused = False
+            self.last_break_time = time.time()
+
+            restarted = True
+            if self.camera is not None:
+                restarted = bool(self.camera.start())
+            if not restarted:
+                self.camera_running = False
+                self.btn_start.setChecked(False)
+                self.btn_start.setText("Bắt đầu")
+                NoticeDialog.warning(
+                    self,
+                    "Camera",
+                    "Không thể mở lại camera sau khi nghỉ. Phiên đã tạm dừng, bạn có thể bấm Bắt đầu để chạy lại.",
+                    config=self.config,
+                )
+                return
+
+            self.camera_running = True
+            self.frame_timer.start(self.frame_interval)
+            self.stats_timer.start(1000)
+            if self._task_context_enabled():
+                self.task_context_classifier.update_from_app_config(self.config)
+                self.task_context_timer.start(self.task_context_interval_ms)
             self.btn_start.setChecked(True)
-            self._start_tracking()
+            self.btn_start.setText("Dừng")
+            self._update_stats()
+            self._refresh_journey_map_dialog()
+            self._update_journey_pip_data(force=True)
+            self._sync_journey_pip_visibility()
+        elif was_tracking:
+            self._session_paused = False
+            self._pause_started_at = 0.0
+            self.btn_start.setChecked(False)
+            self._stop_tracking()
 
     # ── Deep Focus / Journey helpers ─────────────────────────────────────────
 
@@ -5242,9 +5601,11 @@ class MainWindow(QMainWindow):
         if hasattr(self, "guidance_widget"):
             self.guidance_widget.setVisible(not active)
         if hasattr(self, "route_map_widget"):
-            self.route_map_widget.setVisible(True)
+            self.route_map_widget.setVisible(bool(getattr(self, "_session_journey_enabled", False)))
         if hasattr(self, "journey_widget"):
-            self.journey_widget.setVisible(active or self.camera_running)
+            self.journey_widget.setVisible(
+                bool(getattr(self, "_session_journey_enabled", False)) and (active or self.camera_running)
+            )
         if hasattr(self, "task_context_card"):
             self.task_context_card.hide()
         # In deep focus, hide secondary buttons
@@ -5343,7 +5704,9 @@ class MainWindow(QMainWindow):
 
     def _journey_pip_enabled(self) -> bool:
         """Return whether the lightweight Journey PiP is allowed by config."""
-        return bool(self.config.get("enable_journey_pip", True))
+        return bool(self.config.get("enable_journey_pip", True)) and bool(
+            getattr(self, "_session_journey_enabled", False)
+        )
 
     def _ensure_journey_pip(self) -> FocusJourneyPiPWindow:
         """Create the Journey PiP window lazily."""
@@ -5352,7 +5715,7 @@ class MainWindow(QMainWindow):
                 theme_mode=str(self.config.get("theme_mode", "dark"))
             )
             self._journey_pip_window.openRequested.connect(self._restore_from_journey_pip)
-            self._journey_pip_window.hiddenForSession.connect(self._hide_journey_pip_for_session)
+            self._journey_pip_window.closeRequested.connect(self._close_journey_pip_from_button)
         return self._journey_pip_window
 
     def _show_journey_pip(self) -> None:
@@ -5378,17 +5741,40 @@ class MainWindow(QMainWindow):
         if pip is not None and pip.isVisible():
             pip.hide()
 
+    def _close_journey_pip_from_button(self) -> None:
+        """Close PiP for the current minimized/hidden window cycle only."""
+        self._journey_pip_closed_until_restore = True
+        self._hide_journey_pip()
+
     def _hide_journey_pip_for_session(self) -> None:
         """User chose to hide PiP for this active session only."""
         self._journey_pip_hidden_for_session = True
         self._hide_journey_pip()
 
     def _restore_from_journey_pip(self) -> None:
-        """Open the main app from PiP and hide the floating monitor."""
+        """Restore the full Journey map from PiP and hide the floating monitor."""
+        self._journey_pip_closed_until_restore = False
+        self._hide_journey_pip()
+        if (
+            bool(getattr(self, "_session_journey_enabled", False))
+            and bool(getattr(self, "camera_running", False))
+        ):
+            dialog = getattr(self, "_journey_map_dialog", None)
+            if dialog is None:
+                self._open_journey_map_dialog()
+                return
+
+            self.hide()
+            dialog.showNormal()
+            dialog.show()
+            self._refresh_journey_map_dialog(force_route=True)
+            dialog.raise_()
+            dialog.activateWindow()
+            return
+
         self.showNormal()
         self.raise_()
         self.activateWindow()
-        self._hide_journey_pip()
 
     def _sync_journey_pip_visibility(self) -> None:
         """Show PiP only while tracking is active and the main window is minimized/hidden."""
@@ -5400,7 +5786,20 @@ class MainWindow(QMainWindow):
             self._hide_journey_pip()
             return
 
+        dialog = getattr(self, "_journey_map_dialog", None)
+        dialog_minimized = bool(
+            dialog is not None
+            and (dialog.isMinimized() or bool(dialog.windowState() & Qt.WindowState.WindowMinimized))
+        )
+        if dialog is not None and dialog.isVisible() and not dialog_minimized:
+            self._hide_journey_pip()
+            return
+
         if bool(getattr(self, "_journey_pip_hidden_for_session", False)):
+            self._hide_journey_pip()
+            return
+
+        if bool(getattr(self, "_journey_pip_closed_until_restore", False)):
             self._hide_journey_pip()
             return
 
@@ -5473,6 +5872,7 @@ class MainWindow(QMainWindow):
         warmup_seconds = max(0.0, float(getattr(self, "_analysis_warmup_seconds", 0.0) or 0.0))
         self._journey_waiting_for_boarding = False
         self._journey_calibration_reset_done = False
+        self._last_boarding_preview_at = 0.0
         self._analysis_started_at = now
         self._initial_baseline_samples = []
         self._initial_session_baseline = {}
@@ -5511,6 +5911,8 @@ class MainWindow(QMainWindow):
 
     def _open_journey_map_dialog(self) -> None:
         """Open the large flight-focus map for the selected journey."""
+        if not bool(getattr(self, "_session_journey_enabled", False)):
+            return
         try:
             from .journey_map_dialog import FocusJourneyMapDialog
         except Exception as exc:
@@ -5527,14 +5929,19 @@ class MainWindow(QMainWindow):
             self._journey_map_dialog = FocusJourneyMapDialog(
                 config=self.config,
                 audio_manager=getattr(self, "focus_audio_manager", None),
-                parent=self,
+                parent=None,
             )
             self._journey_map_dialog.pauseRequested.connect(self._toggle_journey_pause)
             if hasattr(self._journey_map_dialog, "boardingCompleted"):
                 self._journey_map_dialog.boardingCompleted.connect(self._begin_journey_measurement_after_boarding)
+            if hasattr(self._journey_map_dialog, "dismissed"):
+                self._journey_map_dialog.dismissed.connect(self._handle_journey_map_dismissed)
+            if hasattr(self._journey_map_dialog, "minimizedRequested"):
+                self._journey_map_dialog.minimizedRequested.connect(self._handle_journey_map_minimized)
             self._journey_map_dialog_route_key = ()
             self._journey_map_dialog_progress_key = ()
 
+        self.hide()
         self._journey_map_dialog.show()
         if hasattr(self._journey_map_dialog, "set_paused"):
             self._journey_map_dialog.set_paused(bool(getattr(self, "_session_paused", False)))
@@ -5543,6 +5950,8 @@ class MainWindow(QMainWindow):
         self._journey_map_dialog.activateWindow()
 
     def _refresh_journey_map_dialog(self, *, force_route: bool = False) -> None:
+        if not bool(getattr(self, "_session_journey_enabled", False)):
+            return
         dialog = getattr(self, "_journey_map_dialog", None)
         if dialog is None or not dialog.isVisible():
             return
@@ -5568,9 +5977,50 @@ class MainWindow(QMainWindow):
             dialog.update_progress(progress, remaining_seconds, distance_left, phase)
             self._journey_map_dialog_progress_key = progress_key
 
+    def _handle_journey_map_dismissed(self, ticket_checked: bool = False) -> None:
+        """Do not leave tracking stuck in boarding when the flight map is closed."""
+        self._journey_map_dialog_progress_key = ()
+        if bool(getattr(self, "_closing", False)):
+            return
+        self._journey_pip_closed_until_restore = False
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        self._hide_journey_pip()
+        if not bool(getattr(self, "camera_running", False)):
+            return
+        if bool(getattr(self, "_journey_waiting_for_boarding", False)):
+            logger.info(
+                "Focus Journey map dismissed during boarding; starting measurement (ticket_checked=%s)",
+                bool(ticket_checked),
+            )
+            dialog = getattr(self, "_journey_map_dialog", None)
+            if dialog is not None and hasattr(dialog, "mark_boarding_complete"):
+                dialog.mark_boarding_complete()
+            QTimer.singleShot(0, self._begin_journey_measurement_after_boarding)
+
+    def _handle_journey_map_minimized(self) -> None:
+        """Show PiP when the standalone Journey map is minimized."""
+        if bool(getattr(self, "_closing", False)):
+            return
+        if not bool(getattr(self, "camera_running", False)):
+            return
+        if not bool(getattr(self, "_session_journey_enabled", False)):
+            return
+        self._journey_pip_closed_until_restore = False
+        self.hide()
+        self._update_journey_pip_data(force=True)
+        self._show_journey_pip()
+
     def _update_journey_widget(self) -> None:
         """Refresh the journey progress card."""
         if not hasattr(self, "journey_widget"):
+            return
+        if not bool(getattr(self, "_session_journey_enabled", False)):
+            self.journey_widget.hide()
+            if hasattr(self, "route_map_widget"):
+                self.route_map_widget.hide()
+            self._hide_journey_pip()
             return
         if not self.camera_running:
             self.journey_widget.hide()
@@ -5587,7 +6037,7 @@ class MainWindow(QMainWindow):
 
         planned_s = self._session_planned_minutes * 60
         elapsed_s = int(self.session_time_seconds)
-        is_dark = str(self.config.get("theme_mode", "light")).strip().lower() != "light"
+        is_dark = str(self.config.get("theme_mode", "dark")).strip().lower() != "light"
 
         if planned_s > 0:
             pct = int(min(100, elapsed_s * 100 // planned_s))
@@ -5937,9 +6387,62 @@ class MainWindow(QMainWindow):
         """Open settings dialog."""
         from .settings_dialog import SettingsDialog
 
-        dialog = SettingsDialog(self.config, self, focus_audio_manager=self.focus_audio_manager)
+        dialog = SettingsDialog(
+            self.config,
+            self,
+            focus_audio_manager=self.focus_audio_manager,
+            personalization_status=self._personalization_status_payload(),
+        )
         dialog.config_applied.connect(self._on_settings_applied)
+        dialog.baseline_reset_requested.connect(lambda: self._reset_current_profile_baseline(dialog))
         dialog.exec()
+
+    def _personalization_status_payload(self) -> Dict[str, Any]:
+        try:
+            return self.analytics_store.get_personalization_status(self.profile_name)
+        except Exception as exc:
+            logger.debug("Failed to build personalization status: %s", exc)
+            return {
+                "label": "Chưa đủ dữ liệu",
+                "eligible_sessions": 0,
+                "confidence": 0.0,
+            }
+
+    def _reset_current_profile_baseline(self, dialog: Optional[QDialog] = None) -> None:
+        """Reset personalization baseline for the active profile only."""
+        try:
+            default_work = int(self.config.get("break_interval_minutes", 25) or 25)
+            default_break = int(self.config.get("break_duration_minutes", 5) or 5)
+            status = self.analytics_store.reset_profile_baseline(
+                self.profile_name,
+                default_work=default_work,
+                default_break=default_break,
+            )
+            self._last_recommendation = {
+                "work_minutes": default_work,
+                "break_minutes": default_break,
+                "confidence": 0.0,
+                "based_on_sessions": 0,
+                "adaptation_stage": "cold_start",
+            }
+            if self.engine is not None:
+                self.engine.clear_personalization()
+            if dialog is not None and hasattr(dialog, "set_personalization_status"):
+                dialog.set_personalization_status(status)
+            NoticeDialog.info(
+                dialog or self,
+                "Đã đặt lại baseline",
+                "App sẽ học lại baseline từ các phiên mới của hồ sơ hiện tại.",
+                config=self.config,
+            )
+        except Exception as exc:
+            logger.exception("Failed to reset personalization baseline: %s", exc)
+            NoticeDialog.warning(
+                dialog or self,
+                "Không thể đặt lại baseline",
+                "Có lỗi khi đặt lại baseline cá nhân hóa.",
+                config=self.config,
+            )
 
     @pyqtSlot(dict)
     def _on_settings_applied(self, updates: dict) -> None:
@@ -5949,7 +6452,7 @@ class MainWindow(QMainWindow):
             self.config["_zalo_alerts_user_enabled_once"] = True
         self.config.update(updates)
         self._apply_config()
-        self._sync_profile_scoped_settings_to_google()
+        self._sync_profile_scoped_settings_to_supabase()
         self.config_changed.emit(self.config.copy())
 
     @pyqtSlot()
@@ -5972,8 +6475,9 @@ class MainWindow(QMainWindow):
         self.profile_name = self._get_profile_name()
         self.config["profile_name"] = self.profile_name
         self._reset_profile_scoped_settings_to_defaults()
-        self._load_profile_scoped_settings_from_google(seed_if_missing=True)
+        self._load_profile_scoped_settings_from_supabase(seed_if_missing=True)
         self._apply_config()
+        self._refresh_today_stats_card()
         self.config_changed.emit(self.config.copy())
 
     def _apply_config(self):
@@ -5988,7 +6492,7 @@ class MainWindow(QMainWindow):
         )
         self.profile_name = self._get_profile_name()
         self.config["profile_name"] = self.profile_name
-        self.analytics_store.configure_google_sheets(self.config)
+        self.analytics_store.configure_supabase(self.config)
         self._normalize_zalo_runtime_config()
         self.zalo_alert_manager.configure(self.config)
         self.focus_audio_manager.load_from_config(self.config)
@@ -6001,7 +6505,7 @@ class MainWindow(QMainWindow):
 
             new_camera_id = int(self.config.get("camera_id", 0))
             width, height = self._parse_resolution(self.config.get("resolution", "640x480"))
-            fps = int(self.config.get("fps", 30))
+            fps = int(self.config.get("fps", 15))
 
             current = self.camera.config
             camera_changed = (
@@ -6033,7 +6537,7 @@ class MainWindow(QMainWindow):
             phone_enabled = bool(self.config.get("enable_phone_detection", True))
             phone_mode = str(self.config.get("phone_detection_mode", "heuristic"))
             phone_conf_threshold = float(self.config.get("phone_confidence_threshold", 0.55))
-            phone_interval_frames = max(1, int(self.config.get("phone_detection_interval_frames", 3) or 3))
+            phone_interval_frames = max(1, int(self.config.get("phone_detection_interval_frames", 4) or 4))
             phone_confirm_window_seconds = max(
                 0.8,
                 float(self.config.get("phone_confirmation_window_seconds", 2.5) or 2.5),
@@ -6303,4 +6807,5 @@ class MainWindow(QMainWindow):
     def showEvent(self, event):
         """Hide Journey PiP when the main window is visible again."""
         super().showEvent(event)
+        self._journey_pip_closed_until_restore = False
         QTimer.singleShot(0, self._sync_journey_pip_visibility)

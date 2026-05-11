@@ -358,7 +358,7 @@ class FocusJourneyPiPWindow(QWidget):
     """Compact frameless Journey monitor shown while the main window is minimized."""
 
     openRequested = pyqtSignal()
-    hiddenForSession = pyqtSignal()
+    closeRequested = pyqtSignal()
 
     STATE_COLORS = {
         "ON_SCREEN_READING": "#59d5c0",
@@ -432,7 +432,8 @@ class FocusJourneyPiPWindow(QWidget):
         self.hide_button.setText("×")
         self.hide_button.setToolTip("Ẩn PiP trong phiên này")
         self.hide_button.setFixedSize(24, 24)
-        self.hide_button.clicked.connect(lambda _checked=False: self._hide_for_session())
+        self.hide_button.setToolTip("Tắt")
+        self.hide_button.clicked.connect(lambda _checked=False: self.closeRequested.emit())
         header.addWidget(self.hide_button)
         card_layout.addLayout(header)
 
@@ -664,7 +665,7 @@ class FocusJourneyPiPWindow(QWidget):
             self.map_canvas._update_rounded_mask()
 
     def _hide_for_session(self) -> None:
-        self.hiddenForSession.emit()
+        self.closeRequested.emit()
         self.hide()
 
     def _set_status_dot(self, color: str) -> None:

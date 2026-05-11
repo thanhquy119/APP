@@ -1,0 +1,261 @@
+{
+  "created_at": "2026-05-05T22:49:15",
+  "prediction_path": "analytics\\validation\\state_predictions.csv",
+  "observer_label_path": "analytics\\validation\\observer_labels.csv",
+  "n_predictions": 14100,
+  "n_observer_labels": 540,
+  "n_aligned_samples": 14100,
+  "tolerance_seconds": 1.5,
+  "labels": [
+    "ON_SCREEN_READING",
+    "OFFSCREEN_WRITING",
+    "PHONE_DISTRACTION",
+    "DROWSY_FATIGUE",
+    "AWAY",
+    "UNCERTAIN"
+  ],
+  "metrics": {
+    "accuracy": 0.9298581560283687,
+    "balanced_accuracy": 0.9267970976385446,
+    "macro_f1": 0.9174459854383685,
+    "weighted_f1": 0.9310483902843796,
+    "per_class": {
+      "ON_SCREEN_READING": {
+        "precision": 0.9635589209654519,
+        "recall": 0.9360919540229885,
+        "f1": 0.9496268656716417,
+        "support": 6525,
+        "tp": 6108,
+        "fp": 231,
+        "fn": 417
+      },
+      "OFFSCREEN_WRITING": {
+        "precision": 0.9303135888501742,
+        "recall": 0.922962962962963,
+        "f1": 0.9266236985622212,
+        "support": 2025,
+        "tp": 1869,
+        "fp": 140,
+        "fn": 156
+      },
+      "PHONE_DISTRACTION": {
+        "precision": 0.9112328767123288,
+        "recall": 0.9238888888888889,
+        "f1": 0.9175172413793103,
+        "support": 1800,
+        "tp": 1663,
+        "fp": 162,
+        "fn": 137
+      },
+      "DROWSY_FATIGUE": {
+        "precision": 1.0,
+        "recall": 0.9251851851851852,
+        "f1": 0.9611388995767602,
+        "support": 1350,
+        "tp": 1249,
+        "fp": 0,
+        "fn": 101
+      },
+      "AWAY": {
+        "precision": 0.91484375,
+        "recall": 0.9184313725490196,
+        "f1": 0.9166340508806262,
+        "support": 1275,
+        "tp": 1171,
+        "fp": 109,
+        "fn": 104
+      },
+      "UNCERTAIN": {
+        "precision": 0.751788268955651,
+        "recall": 0.9342222222222222,
+        "f1": 0.8331351565596513,
+        "support": 1125,
+        "tp": 1051,
+        "fp": 347,
+        "fn": 74
+      }
+    },
+    "confusion_matrix": {
+      "ON_SCREEN_READING": {
+        "ON_SCREEN_READING": 6108,
+        "OFFSCREEN_WRITING": 140,
+        "PHONE_DISTRACTION": 140,
+        "DROWSY_FATIGUE": 0,
+        "AWAY": 0,
+        "UNCERTAIN": 137
+      },
+      "OFFSCREEN_WRITING": {
+        "ON_SCREEN_READING": 74,
+        "OFFSCREEN_WRITING": 1869,
+        "PHONE_DISTRACTION": 0,
+        "DROWSY_FATIGUE": 0,
+        "AWAY": 0,
+        "UNCERTAIN": 82
+      },
+      "PHONE_DISTRACTION": {
+        "ON_SCREEN_READING": 36,
+        "OFFSCREEN_WRITING": 0,
+        "PHONE_DISTRACTION": 1663,
+        "DROWSY_FATIGUE": 0,
+        "AWAY": 53,
+        "UNCERTAIN": 48
+      },
+      "DROWSY_FATIGUE": {
+        "ON_SCREEN_READING": 29,
+        "OFFSCREEN_WRITING": 0,
+        "PHONE_DISTRACTION": 0,
+        "DROWSY_FATIGUE": 1249,
+        "AWAY": 35,
+        "UNCERTAIN": 37
+      },
+      "AWAY": {
+        "ON_SCREEN_READING": 61,
+        "OFFSCREEN_WRITING": 0,
+        "PHONE_DISTRACTION": 0,
+        "DROWSY_FATIGUE": 0,
+        "AWAY": 1171,
+        "UNCERTAIN": 43
+      },
+      "UNCERTAIN": {
+        "ON_SCREEN_READING": 31,
+        "OFFSCREEN_WRITING": 0,
+        "PHONE_DISTRACTION": 22,
+        "DROWSY_FATIGUE": 0,
+        "AWAY": 21,
+        "UNCERTAIN": 1051
+      }
+    }
+  },
+  "observer_agreement": {
+    "n_observers": 2,
+    "pairwise": {
+      "observer_1__vs__observer_2": {
+        "n": 270,
+        "cohen_kappa": 0.784
+      }
+    },
+    "mean_pairwise_kappa": 0.784
+  },
+  "aligned_preview": [
+    {
+      "timestamp": 1777811820.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811821.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811822.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811823.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811824.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811825.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811826.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811827.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811828.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811829.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811830.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811831.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811832.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811833.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811834.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811835.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811836.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811837.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811838.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    },
+    {
+      "timestamp": 1777811839.716,
+      "session_id": "thanhquy:S001_D01",
+      "observer_label": "ON_SCREEN_READING",
+      "app_state": "ON_SCREEN_READING"
+    }
+  ]
+}
